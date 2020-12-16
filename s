@@ -6,7 +6,7 @@
 ('X-Files', 'the-x-files','http://thetvdb.com/banners/_cache/posters/77398-23.jpg'),
 ('Mr.Robot', 'mr-robot','http://thetvdb.com/banners/_cache/posters/289590-12.jpg'),
 ('The Expanse', 'the-expanse','http://thetvdb.com/banners/_cache/posters/280619-4.jpg'),
-('The Walking Dead', 'the-walking-dead','http://thetvdb.com/banners/_cache/posters/153021-31.jpg'),
+('The Walking Dead', 'the-walking-dead-online','http://thetvdb.com/banners/_cache/posters/153021-31.jpg'),
 ('The Vampire Diaries', 'the-vampire-diaries','http://thetvdb.com/banners/_cache/posters/95491-40.jpg'),
 ("Da Vinci's Demons", 'da-vincis-demons','http://thetvdb.com/banners/_cache/posters/259669-5.jpg'),
 ('The Originals', 'the-originals','http://thetvdb.com/banners/_cache/posters/266883-14.jpg'),

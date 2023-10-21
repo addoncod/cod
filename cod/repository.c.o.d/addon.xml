@@ -2,9 +2,9 @@
     <addon id="repository.c.o.d" name="[COLOR red]C.O.D Repository[/COLOR]" version="1.0" provider-name="C.O.D">
         <extension point="xbmc.addon.repository" name="[COLOR red]C.O.D Repository[/COLOR]">
 		    <dir>
-                <info compressed="false">https://github.com/addoncod/cod/tree/master/cod/addons.xml</info>
-                <checksum>https://github.com/addoncod/cod/tree/master/cod/addons.xml.md5</checksum>
-                <datadir zip="true">https://github.com/addoncod/cod/tree/master/cod</datadir>
+                <info compressed="false">https://raw.githubusercontent.com/addoncod/cod/master/cod/addons.xml</info>
+                <checksum>https://raw.githubusercontent.com/addoncod/cod/master/cod/addons.xml.md5</checksum>
+                <datadir zip="true">https://github.com/addoncod/cod/tree/5f5876eff609baa46d1bec9854f68a4e2fbce37c/cod</datadir>
 				<hashes>false</hashes>
 			</dir>
         </extension>

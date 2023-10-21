@@ -5,7 +5,7 @@
     <import addon="xbmc.python" version="3.0.0"/>
 	<import addon="script.module.six" />
     <import addon="script.module.kodi-six" />
-	<import addon="script.module.requests"/>
+	<import addon="script.module.requests" version="21.2"/>
 	<import addon="script.module.dateutil" optional="true" />
 	<import addon="script.module.beautifulsoup4"/>
   </requires>
@@ -328,7 +328,7 @@
 		    <dir>
                 <info compressed="false">https://raw.githubusercontent.com/addoncod/cod/master/cod/addons.xml</info>
                 <checksum>https://raw.githubusercontent.com/addoncod/cod/master/cod/addons.xml.md5</checksum>
-                <datadir zip="true">https://github.com/addoncod/cod/tree/5f5876eff609baa46d1bec9854f68a4e2fbce37c/cod</datadir>
+                <datadir zip="true">https://raw.githubusercontent.com/addoncod/cod/master/cod</datadir>
 				<hashes>false</hashes>
 			</dir>
         </extension>

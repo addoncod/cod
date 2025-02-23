@@ -24,7 +24,7 @@ class Block:
         self.hash = self.calculate_hash()
 
     def calculate_hash(self):
-        data_str = f"{self.index}{self.previous_hash}{self.timestamp}{self.transactions}{self.nonce}".encode()
+        data_str = f"{self.index}{self.previous_hash}{self.timestamp}{json.dumps(self.transactions)}{self.nonce}".encode()
         return hashlib.sha256(data_str).hexdigest()
 
 class Blockchain:
@@ -64,23 +64,37 @@ def mine():
     broadcast_block(new_block)
     return jsonify(new_block.__dict__), 200
 
-@app.route('/transactions', methods=['POST'])
+@app.route('/transaction', methods=['POST'])
 def receive_transaction():
     transaction = request.json
-    if validate_transaction(transaction):
+    if validate_transaction(transaction) and check_balance(transaction["sender"], transaction["amount"]):
         PENDING_TRANSACTIONS.append(transaction)
         return jsonify({"message": "Transakcija primljena"}), 200
-    return jsonify({"error": "Nevažeća transakcija"}), 400
+    return jsonify({"error": "Nevažeća transakcija ili nedovoljno sredstava"}), 400
 
 def validate_transaction(transaction):
-    sender_pub_key = ecdsa.VerifyingKey.from_string(bytes.fromhex(transaction["public_key"]), curve=ecdsa.SECP256k1)
-    signature = bytes.fromhex(transaction["signature"])
-    transaction_data = json.dumps({
-        "sender": transaction["sender"],
-        "recipient": transaction["recipient"],
-        "amount": transaction["amount"]
-    })
-    return sender_pub_key.verify(signature, transaction_data.encode())
+    try:
+        sender_pub_key = ecdsa.VerifyingKey.from_string(bytes.fromhex(transaction["public_key"]), curve=ecdsa.SECP256k1)
+        signature = bytes.fromhex(transaction["signature"])
+        transaction_data = json.dumps({
+            "sender": transaction["sender"],
+            "recipient": transaction["recipient"],
+            "amount": transaction["amount"]
+        })
+        return sender_pub_key.verify(signature, transaction_data.encode())
+    except Exception as e:
+        print(f"❌ Neispravna transakcija: {e}")
+        return False
+
+def check_balance(address, amount):
+    balance = 0
+    for block in blockchain.chain:
+        for tx in block.transactions:
+            if tx["recipient"] == address:
+                balance += tx["amount"]
+            if tx["sender"] == address:
+                balance -= tx["amount"]
+    return balance >= amount
 
 @app.route('/chain', methods=['GET'])
 def get_chain():

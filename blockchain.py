@@ -1,6 +1,6 @@
 import time
 import json
-import pyblake2
+import hashlib
 import threading
 import requests
 from flask import Flask, request, jsonify
@@ -23,7 +23,7 @@ class Block:
 
     def calculate_hash(self):
         data_str = f"{self.index}{self.previous_hash}{self.timestamp}{self.data}{self.nonce}".encode()
-        return pyblake2.blake2b(data_str, digest_size=32).hexdigest()
+        return hashlib.sha256(data_str).hexdigest()  # SHA-256 hashiranje
 
     def __repr__(self):
         return json.dumps(self.__dict__, indent=4)
@@ -59,7 +59,7 @@ class Blockchain:
             return True
         return False
 
-# Rudarenje bloka
+# Rudarenje bloka sa SHA-256
 def mine_block(previous_block, data, difficulty=DIFFICULTY):
     index = previous_block.index + 1
     timestamp = int(time.time())

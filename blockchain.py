@@ -1,6 +1,6 @@
 import time
 import json
-import pyblake2
+import hashlib
 import threading
 import requests
 from flask import Flask, request, jsonify
@@ -22,7 +22,7 @@ class Block:
 
     def calculate_hash(self):
         data_str = f"{self.index}{self.previous_hash}{self.timestamp}{self.data}{self.nonce}".encode()
-        return pyblake2.blake2b(data_str, digest_size=32).hexdigest()
+        return hashlib.blake2b(data_str, digest_size=32).hexdigest()
 
     def __repr__(self):
         return json.dumps(self.__dict__, indent=4)

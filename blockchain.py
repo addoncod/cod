@@ -11,20 +11,25 @@ DIFFICULTY = 4
 PEERS = []
 PENDING_TRANSACTIONS = []
 
+# 🔥 Maksimalan broj coina koji mogu biti rudaren (npr. 21 miliona kao Bitcoin)
+MAX_SUPPLY = 21000000  
+current_supply = 0  # Trenutni broj iskopanih coina
+
 app = Flask(__name__)
 socketio = SocketIO(app)
 
 class Block:
-    def __init__(self, index, previous_hash, timestamp, transactions, nonce):
+    def __init__(self, index, previous_hash, timestamp, transactions, nonce, reward):
         self.index = index
         self.previous_hash = previous_hash
         self.timestamp = timestamp
         self.transactions = transactions
         self.nonce = nonce
+        self.reward = reward  # Dodata nagrada za rudarenje
         self.hash = self.calculate_hash()
 
     def calculate_hash(self):
-        data_str = f"{self.index}{self.previous_hash}{self.timestamp}{json.dumps(self.transactions)}{self.nonce}".encode()
+        data_str = f"{self.index}{self.previous_hash}{self.timestamp}{json.dumps(self.transactions)}{self.nonce}{self.reward}".encode()
         return hashlib.sha256(data_str).hexdigest()
 
 class Blockchain:
@@ -32,16 +37,22 @@ class Blockchain:
         self.chain = [self.create_genesis_block()]
 
     def create_genesis_block(self):
-        return Block(0, "0", int(time.time()), [], 0)
+        return Block(0, "0", int(time.time()), [], 0, 0)
 
-    def add_block(self, transactions):
-        new_block = mine_block(self.chain[-1], transactions)
+    def add_block(self, transactions, reward):
+        new_block = mine_block(self.chain[-1], transactions, reward)
         self.chain.append(new_block)
         return new_block
 
 blockchain = Blockchain()
 
-def mine_block(previous_block, transactions, difficulty=DIFFICULTY):
+def mine_block(previous_block, transactions, reward, difficulty=DIFFICULTY):
+    global current_supply
+
+    if current_supply + reward > MAX_SUPPLY:
+        print("⚠️ Maksimalna količina coina dostignuta! Rudarenje onemogućeno.")
+        return None
+
     index = previous_block.index + 1
     timestamp = int(time.time())
     previous_hash = previous_block.hash
@@ -49,52 +60,31 @@ def mine_block(previous_block, transactions, difficulty=DIFFICULTY):
     prefix = "0" * difficulty
 
     while True:
-        new_block = Block(index, previous_hash, timestamp, transactions, nonce)
+        new_block = Block(index, previous_hash, timestamp, transactions, nonce, reward)
         if new_block.hash.startswith(prefix):
+            current_supply += reward  # Dodajemo rudarsku nagradu
             return new_block
         nonce += 1
 
 @app.route('/mine', methods=['POST'])
 def mine():
+    global current_supply
+
     if not PENDING_TRANSACTIONS:
         return jsonify({"message": "Nema transakcija za rudarenje"}), 400
 
-    new_block = blockchain.add_block(PENDING_TRANSACTIONS.copy())
-    PENDING_TRANSACTIONS.clear()
-    broadcast_block(new_block)
-    return jsonify(new_block.__dict__), 200
+    reward = 50  # Početna nagrada za blok (može se smanjivati na pola kao kod Bitcoina)
 
-@app.route('/transaction', methods=['POST'])
-def receive_transaction():
-    transaction = request.json
-    if validate_transaction(transaction) and check_balance(transaction["sender"], transaction["amount"]):
-        PENDING_TRANSACTIONS.append(transaction)
-        return jsonify({"message": "Transakcija primljena"}), 200
-    return jsonify({"error": "Nevažeća transakcija ili nedovoljno sredstava"}), 400
+    if current_supply + reward > MAX_SUPPLY:
+        return jsonify({"message": "Dostignut maksimalan broj coina"}), 400
 
-def validate_transaction(transaction):
-    try:
-        sender_pub_key = ecdsa.VerifyingKey.from_string(bytes.fromhex(transaction["public_key"]), curve=ecdsa.SECP256k1)
-        signature = bytes.fromhex(transaction["signature"])
-        transaction_data = json.dumps({
-            "sender": transaction["sender"],
-            "recipient": transaction["recipient"],
-            "amount": transaction["amount"]
-        })
-        return sender_pub_key.verify(signature, transaction_data.encode())
-    except Exception as e:
-        print(f"❌ Neispravna transakcija: {e}")
-        return False
-
-def check_balance(address, amount):
-    balance = 0
-    for block in blockchain.chain:
-        for tx in block.transactions:
-            if tx["recipient"] == address:
-                balance += tx["amount"]
-            if tx["sender"] == address:
-                balance -= tx["amount"]
-    return balance >= amount
+    new_block = blockchain.add_block(PENDING_TRANSACTIONS.copy(), reward)
+    if new_block:
+        PENDING_TRANSACTIONS.clear()
+        broadcast_block(new_block)
+        return jsonify(new_block.__dict__), 200
+    else:
+        return jsonify({"message": "Nema više coina za rudarenje"}), 400
 
 @app.route('/chain', methods=['GET'])
 def get_chain():

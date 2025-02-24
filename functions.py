@@ -4,12 +4,13 @@ from flask import jsonify
 BLOCKCHAIN_FILE = "blockchain_data.json"
 WALLETS_FILE = "wallets.json"
 
+# Globalni rječnik za korisničke resurse
+USER_RESOURCES = {}
 
 # 📌 **Čuva blockchain u JSON fajl**
 def save_blockchain(blockchain):
     with open(BLOCKCHAIN_FILE, "w") as f:
         json.dump([block.__dict__ for block in blockchain], f, indent=4)
-
 
 # 📌 **Učitava blockchain iz JSON fajla**
 def load_blockchain():
@@ -30,7 +31,6 @@ def load_blockchain():
             "hash": "0"
         }]
 
-
 # 📌 **Dodavanje balansa korisniku**
 def add_balance(user_address, amount):
     if not user_address or amount is None:
@@ -42,42 +42,44 @@ def add_balance(user_address, amount):
 
     return jsonify({"message": f"{amount} coina dodato korisniku {user_address}", "balance": wallets[user_address]}), 200
 
-
+# 📌 **Kupovina resursa**
 def buy_resources(buyer, cpu, ram, seller):
     wallets = load_wallets()
 
-    # Osiguraj da kupac i prodavač imaju wallet (ako ne, inicijaliziraj ih na 0)
+    # Osiguraj da kupac i prodavač imaju wallet
     wallets[buyer] = wallets.get(buyer, 0)
     wallets[seller] = wallets.get(seller, 0)
 
     total_price = (cpu + ram) * 2
-    if wallets[buyer] < total_price:
+    if wallets.get(buyer, 0) < total_price:
         return jsonify({"error": "Nedovoljno coina"}), 400
 
     wallets[buyer] -= total_price
     wallets[seller] += total_price
 
     save_wallets(wallets)
+    
+    # Spremanje kupljenih resursa u globalni rječnik
+    if buyer not in USER_RESOURCES:
+        USER_RESOURCES[buyer] = {"cpu": 0, "ram": 0}
+    USER_RESOURCES[buyer]["cpu"] += cpu
+    USER_RESOURCES[buyer]["ram"] += ram
 
     return jsonify({"message": "Resursi kupljeni", "balance": wallets[buyer]}), 200
-
-
 
 # 📌 **Preuzimanje balansa korisnika**
 def get_balance(address):
     wallets = load_wallets()
     return wallets.get(address, 0)
 
-
 # 📌 **Preuzimanje korisničkih resursa**
 def get_user_resources(user):
-    return jsonify({"message": "Resursi korisnika", "resources": []}), 200
-
+    resources = USER_RESOURCES.get(user, {"cpu": 0, "ram": 0})
+    return jsonify({"message": "Resursi korisnika", "resources": resources}), 200
 
 # 📌 **Preuzimanje zahteva za resurse**
 def get_resource_requests():
     return jsonify({"requests": []}), 200
-
 
 # 📌 **Čuvanje i učitavanje wallet-a**
 def load_wallets():
@@ -86,7 +88,6 @@ def load_wallets():
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
-
 
 def save_wallets(wallets):
     with open(WALLETS_FILE, "w") as f:

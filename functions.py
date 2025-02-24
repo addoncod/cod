@@ -43,12 +43,15 @@ def add_balance(user_address, amount):
     return jsonify({"message": f"{amount} coina dodato korisniku {user_address}", "balance": wallets[user_address]}), 200
 
 
-# 📌 **Kupovina resursa**
 def buy_resources(buyer, cpu, ram, seller):
     wallets = load_wallets()
 
+    # Osiguraj da kupac i prodavač imaju wallet (ako ne, inicijaliziraj ih na 0)
+    wallets[buyer] = wallets.get(buyer, 0)
+    wallets[seller] = wallets.get(seller, 0)
+
     total_price = (cpu + ram) * 2
-    if wallets.get(buyer, 0) < total_price:
+    if wallets[buyer] < total_price:
         return jsonify({"error": "Nedovoljno coina"}), 400
 
     wallets[buyer] -= total_price
@@ -57,6 +60,7 @@ def buy_resources(buyer, cpu, ram, seller):
     save_wallets(wallets)
 
     return jsonify({"message": "Resursi kupljeni", "balance": wallets[buyer]}), 200
+
 
 
 # 📌 **Preuzimanje balansa korisnika**

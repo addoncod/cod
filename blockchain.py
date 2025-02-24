@@ -185,4 +185,4 @@ def get_chain():
     return jsonify([block.to_dict() for block in blockchain.chain]), 200
 
 if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=5000)
+    socketio.run(app, host='192.168.178.104', port=5000)

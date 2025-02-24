@@ -14,6 +14,10 @@ PEERS = []
 RESOURCE_REWARD = 5
 RESOURCE_PRICE = 2
 
+# Globalne varijable za rudare i novčanike (ako nisu definirane drugdje)
+MINERS = {}
+WALLETS = {}
+
 app = Flask(__name__)
 socketio = SocketIO(app)
 
@@ -37,12 +41,15 @@ class Block:
 
 class Blockchain:
     def __init__(self):
-        self.chain = load_blockchain(Block)
+        # Uklonjen je argument, load_blockchain sada ne prima nikakve parametre.
+        self.chain = load_blockchain()
+        # Ako učitani lanac sadrži samo dict-ove (npr. iz JSON fajla), možemo ga po potrebi pretvoriti u Block objekte.
+        self.chain = [Block(**block) if isinstance(block, dict) else block for block in self.chain]
 
     def add_block(self, transactions, resource_tasks, miner):
         new_block = self.mine_block(self.chain[-1], transactions, resource_tasks, miner)
         self.chain.append(new_block)
-        save_blockchain(self)
+        save_blockchain(self.chain)
         return new_block
 
     def mine_block(self, previous_block, transactions, resource_tasks, miner):
@@ -85,6 +92,7 @@ def api_get_balance(address):
 def api_get_user_resources(user):
     return get_user_resources(user)
 
+
 @app.route('/register_miner', methods=['POST'])
 def register_miner():
     """Registracija rudara i njihovih resursa"""
@@ -102,7 +110,6 @@ def register_miner():
     return jsonify({"message": "Miner registrovan", "miners": MINERS}), 200
 
 
-
 @app.route('/resource_request', methods=['GET'])
 def api_get_resource_requests():
     return get_resource_requests()
@@ -110,6 +117,7 @@ def api_get_resource_requests():
 
 @app.route('/chain', methods=['GET'])
 def get_chain():
+    # Pretvaramo objekte u dictionary prije slanja kao JSON
     return jsonify([block.__dict__ for block in blockchain.chain]), 200
 
 

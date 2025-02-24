@@ -17,7 +17,18 @@ def load_blockchain():
         with open(BLOCKCHAIN_FILE, "r") as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return [{"index": 0, "previous_hash": "0", "timestamp": 0, "transactions": [], "resource_tasks": [], "miner": "GENESIS", "reward": 0, "nonce": 0, "hash": "0"}]
+        # Vraća genesis blok kao dict
+        return [{
+            "index": 0,
+            "previous_hash": "0",
+            "timestamp": 0,
+            "transactions": [],
+            "resource_tasks": [],
+            "miner": "GENESIS",
+            "reward": 0,
+            "nonce": 0,
+            "hash": "0"
+        }]
 
 
 # 📌 **Dodavanje balansa korisniku**

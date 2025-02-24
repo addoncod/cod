@@ -92,7 +92,6 @@ def add_resource_request():
     return jsonify({"message": "Zahtev za CPU/RAM dodat", "requests": RESOURCE_REQUESTS}), 200
 
 
-# 📡 **Kupovina CPU/RAM resursa koristeći coin**
 @app.route('/buy_resources', methods=['POST'])
 def buy_resources():
     data = request.json
@@ -107,10 +106,7 @@ def buy_resources():
     if seller not in MINERS:
         return jsonify({"error": "Prodavac nije registrovan kao rudar"}), 400
 
-    if MINERS[seller]["cpu"] < cpu_amount or MINERS[seller]["ram"] < ram_amount:
-        return jsonify({"error": "Prodavac nema dovoljno resursa"}), 400
-
-    total_price = (cpu_amount + ram_amount) * RESOURCE_PRICE  # 💰 Cena resursa
+    total_price = (cpu_amount + ram_amount) * RESOURCE_PRICE
 
     if WALLETS.get(buyer, 0) < total_price:
         return jsonify({"error": "Nedovoljno coina za kupovinu"}), 400
@@ -119,7 +115,36 @@ def buy_resources():
     WALLETS[buyer] -= total_price
     WALLETS[seller] += total_price
 
-    return jsonify({"message": "Uspešno kupljeni resursi", "balance": WALLETS[buyer]}), 200
+    # ✅ Dodela resursa kupcu
+    if buyer not in MINERS:
+        MINERS[buyer] = {"cpu": 0, "ram": 0}
+
+    MINERS[buyer]["cpu"] += cpu_amount
+    MINERS[buyer]["ram"] += ram_amount
+
+    # ✅ Dodaj resurse kupcu u čekanje da ih može koristiti
+    RESOURCE_REQUESTS.append({
+        "requester": buyer,
+        "cpu": cpu_amount,
+        "ram": ram_amount
+    })
+
+    return jsonify({
+        "message": "Uspešno kupljeni resursi",
+        "balance": WALLETS[buyer],
+        "resources": MINERS[buyer],
+        "active_requests": RESOURCE_REQUESTS
+    }), 200
+
+@app.route('/user_resources/<user>', methods=['GET'])
+def user_resources(user):
+    user_res = [req for req in RESOURCE_REQUESTS if req["requester"] == user]
+    
+    return jsonify({
+        "message": "Pregled resursa",
+        "resources": user_res
+    }), 200
+
 
 
 # 📡 **Preuzimanje CPU/RAM zahteva**

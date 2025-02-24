@@ -3,21 +3,15 @@ import json
 import hashlib
 import threading
 import requests
-import ecdsa
 from flask import Flask, request, jsonify
 from flask_socketio import SocketIO, emit
+import functions  # ✅ Uvoz helper funkcija iz functions.py
 
 # 🔧 Blockchain konfiguracija
 DIFFICULTY = 4
 PEERS = []
-PENDING_TRANSACTIONS = []
-RESOURCE_REQUESTS = []  # 📌 Lista CPU/RAM zahteva
-MINERS = {}
-WALLETS = {}
-USED_TXNS = set()  # 📌 Sprečavanje duplih troškova
 BLOCKCHAIN_FILE = "blockchain_data.json"
-RESOURCE_REWARD = 5
-RESOURCE_PRICE = 2
+WALLETS = {}
 
 app = Flask(__name__)
 socketio = SocketIO(app)
@@ -69,82 +63,64 @@ class Blockchain:
 blockchain = Blockchain()
 
 
-# 📡 **Validacija transakcija koristeći ECDSA**
-def validate_transaction(transaction):
-    sender_pub_key = ecdsa.VerifyingKey.from_string(bytes.fromhex(transaction["public_key"]), curve=ecdsa.SECP256k1)
-    signature = bytes.fromhex(transaction["signature"])
-    transaction_data = json.dumps({
-        "sender": transaction["sender"],
-        "recipient": transaction["recipient"],
-        "amount": transaction["amount"]
-    })
-    
-    if sender_pub_key.verify(signature, transaction_data.encode()):
-        if transaction["txid"] in USED_TXNS:
-            return False  # 🚨 Sprečavanje duplih troškova
-        USED_TXNS.add(transaction["txid"])
-        return True
-    return False
+# 📡 **Pregled CPU/RAM zahteva**
+@app.route('/resource_request', methods=['GET'])
+def get_resource_requests():
+    return jsonify(functions.get_resource_requests())
 
 
-# 📡 **Dodavanje transakcija**
+# 📡 **Dodavanje CPU/RAM zahteva**
+@app.route('/resource_request', methods=['POST'])
+def add_resource_request():
+    return jsonify(*functions.add_resource_request(request.json))
+
+
+# 📡 **Kupovina CPU/RAM resursa**
+@app.route('/buy_resources', methods=['POST'])
+def buy_resources():
+    return jsonify(*functions.buy_resources(request.json))
+
+
+# 📡 **Pregled transakcija**
+@app.route('/transactions', methods=['GET'])
+def get_transactions():
+    return jsonify(functions.get_transactions())
+
+
+# 📡 **Dodavanje transakcije**
 @app.route('/add_transaction', methods=['POST'])
 def add_transaction():
-    data = request.json
-    if validate_transaction(data):
-        PENDING_TRANSACTIONS.append(data)
-        return jsonify({"message": "Transakcija validna i dodata"}), 200
-    return jsonify({"error": "Nevalidna transakcija"}), 400
+    return jsonify(*functions.add_transaction(request.json))
 
 
-# 📡 **Rudarenje koristeći SHA-256**
-def mine_block(previous_block, transactions, resource_tasks, miner):
-    index = previous_block.index + 1
-    timestamp = int(time.time())
-    previous_hash = previous_block.hash
-    nonce = 0
-    prefix = "0" * DIFFICULTY
-
-    while True:
-        new_block = Block(index, previous_hash, timestamp, transactions, resource_tasks, miner, RESOURCE_REWARD, nonce)
-        if new_block.hash.startswith(prefix):
-            print(f"✅ Blok {index} iskopan | Rudar: {miner} | Nagrada: {RESOURCE_REWARD} coins | Hash: {new_block.hash}")
-
-            # 💰 Dodaj nagradu rudaru
-            WALLETS[miner] = WALLETS.get(miner, 0) + RESOURCE_REWARD
-            return new_block
-        nonce += 1
-
-
-# 📡 **Distribuirani P2P sistem - Primanje blokova**
-@app.route('/new_block', methods=['POST'])
-def receive_new_block():
-    block_data = request.json
-    new_block = Block(**block_data)
-
-    last_block = blockchain.chain[-1]
-    if new_block.previous_hash == last_block.hash:
-        blockchain.chain.append(new_block)
-        blockchain.save_blockchain()
-        return jsonify({"message": "Blok prihvaćen"}), 200
-    return jsonify({"error": "Nevalidan blok"}), 400
-
-
-# 📡 **Dodavanje P2P čvorova**
-@app.route('/register_peer', methods=['POST'])
-def register_peer():
-    data = request.json
-    peer = data.get("peer")
-    if peer and peer not in PEERS:
-        PEERS.append(peer)
-        return jsonify({"message": "Čvor dodat"}), 200
-    return jsonify({"error": "Neispravan čvor"}), 400
-
-
-# 📡 **Pregled čvorova u mreži**
+# 📡 **Pregled čvorova**
 @app.route('/peers', methods=['GET'])
 def get_peers():
-    return jsonify({"peers": PEERS}), 200
+    return jsonify(functions.get_peers())
+
+
+# 📡 **Registracija čvora**
+@app.route('/register_peer', methods=['POST'])
+def register_peer():
+    return jsonify(*functions.register_peer(request.json))
+
+
+# 📡 **Pregled balansa korisnika**
+@app.route('/balance/<address>', methods=['GET'])
+def get_balance(address):
+    return jsonify(functions.get_balance(address))
+
+
+# 📡 **Dodavanje balansa korisniku (testiranje)**
+@app.route('/add_balance', methods=['POST'])
+def add_balance():
+    return jsonify(*functions.add_balance(request.json))
+
+
+# 📡 **Pregled blockchaina**
+@app.route('/chain', methods=['GET'])
+def get_chain():
+    return jsonify([block.__dict__ for block in blockchain.chain]), 200
 
 
 # 📡 **Emitovanje bloka u P2P mrežu**
@@ -154,12 +130,6 @@ def broadcast_block(block):
             requests.post(f"{peer}/new_block", json=block.__dict__)
         except requests.exceptions.RequestException:
             pass
-
-
-# 📡 **Pregled blockchaina**
-@app.route('/chain', methods=['GET'])
-def get_chain():
-    return jsonify([block.__dict__ for block in blockchain.chain]), 200
 
 
 if __name__ == '__main__':

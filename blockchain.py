@@ -4,7 +4,6 @@ import hashlib
 import threading
 import requests
 import psutil
-from datasets import load_dataset
 from flask import Flask, request, jsonify
 from flask_socketio import SocketIO, emit
 
@@ -12,24 +11,22 @@ from flask_socketio import SocketIO, emit
 DIFFICULTY = 4
 PEERS = []
 PENDING_TRANSACTIONS = []
-PENDING_AI_TASKS = []
 RESOURCE_REQUESTS = []  # 📌 Korisnici koji žele da koriste CPU/RAM
 MINERS = {}  # 📌 Rudari i njihovi dostupni resursi
-AI_REWARD = 10  # 💰 Nagrada za AI rudarenje
+WALLETS = {}  # 💳 Balans korisnika u coinima
 RESOURCE_REWARD = 5  # 💰 Nagrada za deljenje CPU/RAM
-AI_DATASET = "imdb"
+RESOURCE_PRICE = 2  # 💲 Cena CPU/RAM resursa po jedinici
 
 app = Flask(__name__)
 socketio = SocketIO(app)
 
 
 class Block:
-    def __init__(self, index, previous_hash, timestamp, transactions, ai_tasks, resource_tasks, miner, reward, nonce):
+    def __init__(self, index, previous_hash, timestamp, transactions, resource_tasks, miner, reward, nonce):
         self.index = index
         self.previous_hash = previous_hash
         self.timestamp = timestamp
         self.transactions = transactions
-        self.ai_tasks = ai_tasks  # 🧠 AI zadaci
         self.resource_tasks = resource_tasks  # 💾 CPU/RAM zadaci
         self.miner = miner  # ⛏ Adresa rudara
         self.reward = reward  # 💰 Nagrada rudaru
@@ -37,7 +34,7 @@ class Block:
         self.hash = self.calculate_hash()
 
     def calculate_hash(self):
-        data_str = f"{self.index}{self.previous_hash}{self.timestamp}{self.transactions}{self.ai_tasks}{self.resource_tasks}{self.miner}{self.reward}{self.nonce}".encode()
+        data_str = f"{self.index}{self.previous_hash}{self.timestamp}{self.transactions}{self.resource_tasks}{self.miner}{self.reward}{self.nonce}".encode()
         return hashlib.sha256(data_str).hexdigest()
 
 
@@ -46,10 +43,10 @@ class Blockchain:
         self.chain = [self.create_genesis_block()]
 
     def create_genesis_block(self):
-        return Block(0, "0", int(time.time()), [], [], [], "GENESIS", 0, 0)
+        return Block(0, "0", int(time.time()), [], [], "GENESIS", 0, 0)
 
-    def add_block(self, transactions, ai_tasks, resource_tasks, miner):
-        new_block = mine_block(self.chain[-1], transactions, ai_tasks, resource_tasks, miner)
+    def add_block(self, transactions, resource_tasks, miner):
+        new_block = mine_block(self.chain[-1], transactions, resource_tasks, miner)
         self.chain.append(new_block)
         return new_block
 
@@ -67,15 +64,10 @@ def register_miner():
 
     if miner_id and cpu_available and ram_available:
         MINERS[miner_id] = {"cpu": cpu_available, "ram": ram_available}
+        WALLETS.setdefault(miner_id, 0)  # ✅ Kreiraj novčanik ako ne postoji
         return jsonify({"message": "Miner registrovan", "miners": MINERS}), 200
 
     return jsonify({"error": "Neispravni podaci"}), 400
-
-
-# 📡 **Dodavanje AI zadatka**
-@app.route('/ai_tasks', methods=['GET'])
-def get_ai_tasks():
-    return jsonify({"ai_tasks": PENDING_AI_TASKS}), 200
 
 
 # 📡 **Dodavanje CPU/RAM zahteva**
@@ -93,24 +85,38 @@ def add_resource_request():
     return jsonify({"error": "Neispravni podaci"}), 400
 
 
-# 📡 **Dodavanje AI zadataka u blockchain**
-def fetch_ai_task():
-    while True:
-        if len(PENDING_AI_TASKS) < 5:
-            print("🔍 Preuzimam AI zadatak sa Hugging Face...")
-            try:
-                dataset = load_dataset(AI_DATASET, split="train")
-                sample = dataset.shuffle(seed=int(time.time())).select([0])
-                task_text = sample[0]['text']
-                PENDING_AI_TASKS.append({"task": task_text, "solution": "TBD"})
-                print(f"📜 Novi AI zadatak dodat: {task_text[:100]}...")
-            except Exception as e:
-                print("❌ Greška pri preuzimanju AI zadatka!", e)
-        time.sleep(30)
+# 📡 **Kupovina CPU/RAM resursa koristeći coin**
+@app.route('/buy_resources', methods=['POST'])
+def buy_resources():
+    data = request.json
+    buyer = data.get("buyer")
+    cpu_amount = data.get("cpu")
+    ram_amount = data.get("ram")
+    seller = data.get("seller")
+
+    if not all([buyer, cpu_amount, ram_amount, seller]):
+        return jsonify({"error": "Neispravni podaci"}), 400
+
+    total_price = (cpu_amount + ram_amount) * RESOURCE_PRICE  # 💰 Cena resursa
+
+    if WALLETS.get(buyer, 0) < total_price:
+        return jsonify({"error": "Nedovoljno coina za kupovinu"}), 400
+
+    # ✅ Prenos coina
+    WALLETS[buyer] -= total_price
+    WALLETS[seller] += total_price
+
+    return jsonify({"message": "Uspešno kupljeni resursi", "balance": WALLETS[buyer]}), 200
 
 
-# ⛏ **Rudarenje bloka sa AI zadatkom i CPU/RAM uslugama**
-def mine_block(previous_block, transactions, ai_tasks, resource_tasks, miner, difficulty=DIFFICULTY):
+# 📡 **Preuzimanje CPU/RAM zahteva**
+@app.route('/resource_request', methods=['GET'])
+def get_resource_requests():
+    return jsonify({"requests": RESOURCE_REQUESTS}), 200
+
+
+# ⛏ **Rudarenje bloka sa CPU/RAM deljenjem**
+def mine_block(previous_block, transactions, resource_tasks, miner, difficulty=DIFFICULTY):
     index = previous_block.index + 1
     timestamp = int(time.time())
     previous_hash = previous_block.hash
@@ -118,9 +124,12 @@ def mine_block(previous_block, transactions, ai_tasks, resource_tasks, miner, di
     prefix = "0" * difficulty
 
     while True:
-        new_block = Block(index, previous_hash, timestamp, transactions, ai_tasks, resource_tasks, miner, AI_REWARD + RESOURCE_REWARD, nonce)
+        new_block = Block(index, previous_hash, timestamp, transactions, resource_tasks, miner, RESOURCE_REWARD, nonce)
         if new_block.hash.startswith(prefix):
-            print(f"✅ Blok {index} iskopan | Rudar: {miner} | Nagrada: {AI_REWARD + RESOURCE_REWARD} coins | Hash: {new_block.hash}")
+            print(f"✅ Blok {index} iskopan | Rudar: {miner} | Nagrada: {RESOURCE_REWARD} coins | Hash: {new_block.hash}")
+
+            # 💰 Dodaj nagradu rudaru
+            WALLETS[miner] = WALLETS.get(miner, 0) + RESOURCE_REWARD
             return new_block
         nonce += 1
 
@@ -134,33 +143,28 @@ def mine():
     if not miner_address:
         return jsonify({"message": "Rudar mora poslati svoju adresu"}), 400
 
-    if not PENDING_AI_TASKS and not RESOURCE_REQUESTS:
-        return jsonify({"message": "Nema zadataka za rudarenje"}), 400
+    if not RESOURCE_REQUESTS:
+        return jsonify({"message": "Nema CPU/RAM zahteva za rudarenje"}), 400
 
-    ai_task = PENDING_AI_TASKS.pop(0) if PENDING_AI_TASKS else None
-    resource_task = RESOURCE_REQUESTS.pop(0) if RESOURCE_REQUESTS else None
+    resource_task = RESOURCE_REQUESTS.pop(0)
 
-    new_block = blockchain.add_block([], [ai_task] if ai_task else [], [resource_task] if resource_task else [], miner_address)
+    new_block = blockchain.add_block([], [resource_task] if resource_task else [], miner_address)
     broadcast_block(new_block)
     return jsonify(new_block.__dict__), 200
 
 
-# 📡 **Provera balansa rudara**
+# 📡 **Provera balansa korisnika**
 @app.route('/balance/<address>', methods=['GET'])
 def get_balance(address):
-    balance = sum(block.reward for block in blockchain.chain if block.miner == address)
+    balance = WALLETS.get(address, 0)
     return jsonify({"balance": balance}), 200
 
 
-# 📡 **API Endpoint za dobijanje celog blockchaina** 🔥 **(Ispravka za 404 grešku)**
+# 📡 **API Endpoint za dobijanje celog blockchaina**
 @app.route('/chain', methods=['GET'])
 def get_chain():
     return jsonify([block.__dict__ for block in blockchain.chain]), 200
 
-# 📡 **Preuzimanje CPU/RAM zahteva za rudare**
-@app.route('/resource_request', methods=['GET'])
-def get_resource_requests():
-    return jsonify({"requests": RESOURCE_REQUESTS}), 200
 
 # 📡 **Emitovanje novog bloka svim čvorovima**
 def broadcast_block(block):
@@ -172,5 +176,4 @@ def broadcast_block(block):
 
 
 if __name__ == '__main__':
-    threading.Thread(target=fetch_ai_task, daemon=True).start()
     socketio.run(app, host='0.0.0.0', port=5000)

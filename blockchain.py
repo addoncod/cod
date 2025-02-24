@@ -12,7 +12,7 @@ DIFFICULTY = 4
 PEERS = []
 PENDING_TRANSACTIONS = []
 PENDING_AI_TASKS = []
-AI_REWARD = 10  # 💰 Nagrada za rudare (10 coina)
+AI_REWARD = 10  # 💰 Nagrada za rudare
 AI_DATASET = "imdb"
 
 app = Flask(__name__)
@@ -26,8 +26,8 @@ class Block:
         self.timestamp = timestamp
         self.transactions = transactions
         self.ai_tasks = ai_tasks
-        self.miner = miner  # 🏆 Adresa rudara koji je iskopao blok
-        self.reward = reward  # 💰 Nagrada za rudara
+        self.miner = miner  # 🏆 Adresa rudara
+        self.reward = reward  # 💰 Nagrada
         self.nonce = nonce
         self.hash = self.calculate_hash()
 
@@ -55,17 +55,25 @@ blockchain = Blockchain()
 # 🔄 **Automatsko preuzimanje AI zadataka sa Hugging Face**
 def fetch_ai_task():
     while True:
-        print("🔍 Preuzimam AI zadatak sa Hugging Face...")
-        try:
-            dataset = load_dataset(AI_DATASET, split="train")
-            sample = dataset.shuffle(seed=int(time.time())).select([0])
-            task_text = sample[0]['text']
-            PENDING_AI_TASKS.append({"task": task_text, "solution": "TBD"})
-            print(f"📜 Novi AI zadatak dodat u mempool: {task_text[:100]}...")
-        except Exception as e:
-            print("❌ Greška pri preuzimanju AI zadatka!", e)
-
+        if len(PENDING_AI_TASKS) < 5:  # 🛠 Ako ima manje od 5 zadataka u čekanju, dodaj novi
+            print("🔍 Preuzimam AI zadatak sa Hugging Face...")
+            try:
+                dataset = load_dataset(AI_DATASET, split="train")
+                sample = dataset.shuffle(seed=int(time.time())).select([0])
+                task_text = sample[0]['text']
+                PENDING_AI_TASKS.append({"task": task_text, "solution": "TBD"})
+                print(f"📜 Novi AI zadatak dodat u mempool: {task_text[:100]}...")
+            except Exception as e:
+                print("❌ Greška pri preuzimanju AI zadatka!", e)
         time.sleep(30)
+
+
+# 📡 **Endpoint za dobijanje AI zadataka**
+@app.route('/ai_tasks', methods=['GET'])
+def get_ai_tasks():
+    if not PENDING_AI_TASKS:
+        return jsonify({"message": "Trenutno nema AI zadataka"}), 200
+    return jsonify({"ai_tasks": PENDING_AI_TASKS}), 200
 
 
 # ⛏ **Rudarenje bloka sa AI zadatkom + nagrada**

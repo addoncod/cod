@@ -1,3 +1,4 @@
+import time
 import json
 from flask import jsonify
 
@@ -7,18 +8,20 @@ WALLETS_FILE = "wallets.json"
 # Globalni rječnik za korisničke resurse
 USER_RESOURCES = {}
 
-# 📌 **Čuva blockchain u JSON fajl**
+# Globalna lista za zahtjeve resursa
+RESOURCE_REQUESTS = []
+
+# 📌 Čuva blockchain u JSON fajl
 def save_blockchain(blockchain):
     with open(BLOCKCHAIN_FILE, "w") as f:
         json.dump([block.__dict__ for block in blockchain], f, indent=4)
 
-# 📌 **Učitava blockchain iz JSON fajla**
+# 📌 Učitava blockchain iz JSON fajla
 def load_blockchain():
     try:
         with open(BLOCKCHAIN_FILE, "r") as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        # Vraća genesis blok kao dict
         return [{
             "index": 0,
             "previous_hash": "0",
@@ -31,7 +34,7 @@ def load_blockchain():
             "hash": "0"
         }]
 
-# 📌 **Dodavanje balansa korisniku**
+# 📌 Dodavanje balansa korisniku
 def add_balance(user_address, amount):
     if not user_address or amount is None:
         return jsonify({"message": "Nedostaju parametri"}), 400
@@ -42,7 +45,7 @@ def add_balance(user_address, amount):
 
     return jsonify({"message": f"{amount} coina dodato korisniku {user_address}", "balance": wallets[user_address]}), 200
 
-# 📌 **Kupovina resursa**
+# 📌 Kupovina resursa i kreiranje zahtjeva za resurse
 def buy_resources(buyer, cpu, ram, seller):
     wallets = load_wallets()
 
@@ -65,23 +68,31 @@ def buy_resources(buyer, cpu, ram, seller):
     USER_RESOURCES[buyer]["cpu"] += cpu
     USER_RESOURCES[buyer]["ram"] += ram
 
+    # Kreiraj zahtjev za resurse i dodaj ga u RESOURCE_REQUESTS
+    RESOURCE_REQUESTS.append({
+        "buyer": buyer,
+        "cpu": cpu,
+        "ram": ram,
+        "timestamp": int(time.time())
+    })
+
     return jsonify({"message": "Resursi kupljeni", "balance": wallets[buyer]}), 200
 
-# 📌 **Preuzimanje balansa korisnika**
+# 📌 Preuzimanje balansa korisnika
 def get_balance(address):
     wallets = load_wallets()
     return wallets.get(address, 0)
 
-# 📌 **Preuzimanje korisničkih resursa**
+# 📌 Preuzimanje korisničkih resursa
 def get_user_resources(user):
     resources = USER_RESOURCES.get(user, {"cpu": 0, "ram": 0})
     return jsonify({"message": "Resursi korisnika", "resources": resources}), 200
 
-# 📌 **Preuzimanje zahteva za resurse**
+# 📌 Preuzimanje zahtjeva za resurse
 def get_resource_requests():
-    return jsonify({"requests": []}), 200
+    return jsonify({"requests": RESOURCE_REQUESTS}), 200
 
-# 📌 **Čuvanje i učitavanje wallet-a**
+# 📌 Čuvanje i učitavanje wallet-a
 def load_wallets():
     try:
         with open(WALLETS_FILE, "r") as f:

@@ -62,12 +62,19 @@ def register_miner():
     cpu_available = data.get("cpu_available")
     ram_available = data.get("ram_available")
 
-    if miner_id and cpu_available and ram_available:
-        MINERS[miner_id] = {"cpu": cpu_available, "ram": ram_available}
-        WALLETS.setdefault(miner_id, 0)  # ✅ Kreiraj novčanik ako ne postoji
-        return jsonify({"message": "Miner registrovan", "miners": MINERS}), 200
+    if not all([miner_id, cpu_available, ram_available]):
+        return jsonify({"error": "Neispravni podaci"}), 400
 
-    return jsonify({"error": "Neispravni podaci"}), 400
+    MINERS[miner_id] = {"cpu": cpu_available, "ram": ram_available}
+    WALLETS.setdefault(miner_id, 0)  # ✅ Kreiraj novčanik ako ne postoji
+
+    return jsonify({"message": "Miner registrovan", "miners": MINERS}), 200
+
+
+# 📡 **Pregled rudara i dostupnih resursa**
+@app.route('/miners', methods=['GET'])
+def get_miners():
+    return jsonify({"miners": MINERS}), 200
 
 
 # 📡 **Dodavanje CPU/RAM zahteva**
@@ -78,11 +85,11 @@ def add_resource_request():
     cpu_needed = data.get("cpu_needed")
     ram_needed = data.get("ram_needed")
 
-    if requester and cpu_needed and ram_needed:
-        RESOURCE_REQUESTS.append({"requester": requester, "cpu": cpu_needed, "ram": ram_needed})
-        return jsonify({"message": "Zahtev za CPU/RAM dodat", "requests": RESOURCE_REQUESTS}), 200
+    if not all([requester, cpu_needed, ram_needed]):
+        return jsonify({"error": "Neispravni podaci"}), 400
 
-    return jsonify({"error": "Neispravni podaci"}), 400
+    RESOURCE_REQUESTS.append({"requester": requester, "cpu": cpu_needed, "ram": ram_needed})
+    return jsonify({"message": "Zahtev za CPU/RAM dodat", "requests": RESOURCE_REQUESTS}), 200
 
 
 # 📡 **Kupovina CPU/RAM resursa koristeći coin**
@@ -96,6 +103,12 @@ def buy_resources():
 
     if not all([buyer, cpu_amount, ram_amount, seller]):
         return jsonify({"error": "Neispravni podaci"}), 400
+
+    if seller not in MINERS:
+        return jsonify({"error": "Prodavac nije registrovan kao rudar"}), 400
+
+    if MINERS[seller]["cpu"] < cpu_amount or MINERS[seller]["ram"] < ram_amount:
+        return jsonify({"error": "Prodavac nema dovoljno resursa"}), 400
 
     total_price = (cpu_amount + ram_amount) * RESOURCE_PRICE  # 💰 Cena resursa
 
@@ -134,53 +147,26 @@ def mine_block(previous_block, transactions, resource_tasks, miner, difficulty=D
         nonce += 1
 
 
-# 📡 **Rudarenje bloka**
-@app.route('/mine', methods=['POST'])
-def mine():
-    data = request.json
-    miner_address = data.get("miner")
-
-    if not miner_address:
-        return jsonify({"message": "Rudar mora poslati svoju adresu"}), 400
-
-    if not RESOURCE_REQUESTS:
-        return jsonify({"message": "Nema CPU/RAM zahteva za rudarenje"}), 400
-
-    resource_task = RESOURCE_REQUESTS.pop(0)
-
-    new_block = blockchain.add_block([], [resource_task] if resource_task else [], miner_address)
-    broadcast_block(new_block)
-    return jsonify(new_block.__dict__), 200
-
-
 # 📡 **Provera balansa korisnika**
 @app.route('/balance/<address>', methods=['GET'])
 def get_balance(address):
     balance = WALLETS.get(address, 0)
     return jsonify({"balance": balance}), 200
 
+
+# 📡 **Dodavanje balansa korisniku (samo za testiranje)**
 @app.route('/add_balance', methods=['POST'])
 def add_balance():
-    try:
-        data = request.get_json()
-        user_address = data.get("user")
-        amount = data.get("amount")
+    data = request.json
+    user_address = data.get("user")
+    amount = data.get("amount")
 
-        if not user_address or amount is None:
-            return jsonify({"message": "Nedostaju parametri"}), 400
+    if not all([user_address, amount]):
+        return jsonify({"message": "Nedostaju parametri"}), 400
 
-        # Dodajemo testne tokene kao transakciju u blockchain
-        new_block = blockchain.add_block(
-            transactions=[{"sender": "SYSTEM", "recipient": user_address, "amount": amount}],
-            ai_tasks=[],
-            resource_tasks=[],
-            miner="SYSTEM"
-        )
+    WALLETS[user_address] = WALLETS.get(user_address, 0) + amount
 
-        return jsonify({"message": f"{amount} coina dodato korisniku {user_address}", "new_block": new_block.__dict__}), 200
-    
-    except Exception as e:
-        return jsonify({"error": f"Greška na serveru: {str(e)}"}), 500
+    return jsonify({"message": f"{amount} coina dodato korisniku {user_address}", "balance": WALLETS[user_address]}), 200
 
 
 # 📡 **API Endpoint za dobijanje celog blockchaina**

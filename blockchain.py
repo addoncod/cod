@@ -123,7 +123,6 @@ def buy_resources():
     MINERS[buyer]["cpu"] += cpu_amount
     MINERS[buyer]["ram"] += ram_amount
 
-    # ✅ Dodaj resurse kupcu u čekanje da ih može koristiti
     RESOURCE_REQUESTS.append({
         "requester": buyer,
         "cpu": cpu_amount,
@@ -138,21 +137,30 @@ def buy_resources():
     }), 200
 
 
-# 📡 **Provera resursa korisnika**
-@app.route('/user_resources/<user>', methods=['GET'])
-def user_resources(user):
-    user_res = [req for req in RESOURCE_REQUESTS if req["requester"] == user]
-    
-    return jsonify({
-        "message": "Pregled resursa",
-        "resources": user_res
-    }), 200
+# 📡 **Endpoint za rudarenje**
+@app.route('/mine', methods=['POST'])
+def mine():
+    data = request.json
+    miner_address = data.get("miner")
+
+    if not miner_address:
+        return jsonify({"message": "Rudar mora poslati svoju adresu"}), 400
+
+    if not RESOURCE_REQUESTS:
+        return jsonify({"message": "Nema CPU/RAM zahteva za rudarenje"}), 400
+
+    resource_task = RESOURCE_REQUESTS.pop(0)
+
+    new_block = blockchain.add_block([], [resource_task] if resource_task else [], miner_address)
+    broadcast_block(new_block)
+    return jsonify(new_block.__dict__), 200
 
 
-# 📡 **Preuzimanje CPU/RAM zahteva**
-@app.route('/resource_request', methods=['GET'])
-def get_resource_requests():
-    return jsonify({"requests": RESOURCE_REQUESTS}), 200
+# 📡 **Provera balansa korisnika**
+@app.route('/balance/<address>', methods=['GET'])
+def get_balance(address):
+    balance = WALLETS.get(address, 0)
+    return jsonify({"balance": balance}), 200
 
 
 # 📡 **Dodavanje balansa korisniku (testiranje)**

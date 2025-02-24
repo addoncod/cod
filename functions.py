@@ -41,16 +41,25 @@ def add_balance(user_address, amount):
 
 def buy_resources(buyer, cpu, ram, seller):
     """Kupovina CPU/RAM resursa koristeći coin"""
+    if buyer not in WALLETS:
+        return jsonify({"error": "Kupac nije registrovan"}), 400
+    if seller not in WALLETS:
+        return jsonify({"error": "Prodavac nije registrovan"}), 400
+    if cpu <= 0 or ram <= 0:
+        return jsonify({"error": "CPU i RAM moraju biti veći od nule"}), 400
+    if seller not in MINERS:
+        return jsonify({"error": "Prodavac nije rudar"}), 400
+
     total_price = (cpu + ram) * RESOURCE_PRICE
 
     if WALLETS.get(buyer, 0) < total_price:
         return jsonify({"error": "Nedovoljno coina za kupovinu"}), 400
 
-    # Prenos coina
+    # ✅ Prenos coina
     WALLETS[buyer] -= total_price
     WALLETS[seller] += total_price
 
-    # Dodavanje resursa kupcu
+    # ✅ Dodaj kupljene resurse korisniku
     RESOURCE_REQUESTS.append({
         "requester": buyer,
         "cpu": cpu,
@@ -62,7 +71,6 @@ def buy_resources(buyer, cpu, ram, seller):
         "balance": WALLETS[buyer],
         "resources": RESOURCE_REQUESTS
     }), 200
-
 
 def get_user_resources(user):
     """Pregled kupljenih resursa korisnika"""

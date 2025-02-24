@@ -1,6 +1,10 @@
 import time
 import json
+import logging
 from flask import jsonify
+
+# Konfiguracija logiranja
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 BLOCKCHAIN_FILE = "blockchain_data.json"
 WALLETS_FILE = "wallets.json"
@@ -11,17 +15,22 @@ USER_RESOURCES = {}
 # Globalna lista za zahtjeve resursa
 RESOURCE_REQUESTS = []
 
-# 📌 Čuva blockchain u JSON fajl
 def save_blockchain(blockchain):
-    with open(BLOCKCHAIN_FILE, "w") as f:
-        json.dump([block.__dict__ for block in blockchain], f, indent=4)
+    try:
+        with open(BLOCKCHAIN_FILE, "w") as f:
+            json.dump([block for block in blockchain], f, indent=4)
+        logging.info("Blockchain uspješno spremljen.")
+    except Exception as e:
+        logging.error(f"Greška pri spremanju blockchaina: {e}")
 
-# 📌 Učitava blockchain iz JSON fajla
 def load_blockchain():
     try:
         with open(BLOCKCHAIN_FILE, "r") as f:
-            return json.load(f)
+            blockchain = json.load(f)
+            logging.info("Blockchain uspješno učitan.")
+            return blockchain
     except (FileNotFoundError, json.JSONDecodeError):
+        logging.warning("Blockchain datoteka ne postoji ili je oštećena, kreiram GENESIS blok.")
         return [{
             "index": 0,
             "previous_hash": "0",
@@ -34,7 +43,6 @@ def load_blockchain():
             "hash": "0"
         }]
 
-# 📌 Dodavanje balansa korisniku
 def add_balance(user_address, amount):
     if not user_address or amount is None:
         return jsonify({"message": "Nedostaju parametri"}), 400
@@ -42,10 +50,9 @@ def add_balance(user_address, amount):
     wallets = load_wallets()
     wallets[user_address] = wallets.get(user_address, 0) + amount
     save_wallets(wallets)
-
+    logging.info(f"Dodano {amount} coina korisniku {user_address}.")
     return jsonify({"message": f"{amount} coina dodato korisniku {user_address}", "balance": wallets[user_address]}), 200
 
-# 📌 Kupovina resursa i kreiranje zahtjeva za resurse
 def buy_resources(buyer, cpu, ram, seller):
     wallets = load_wallets()
 
@@ -59,47 +66,47 @@ def buy_resources(buyer, cpu, ram, seller):
 
     wallets[buyer] -= total_price
     wallets[seller] += total_price
-
     save_wallets(wallets)
     
-    # Spremanje kupljenih resursa u globalni rječnik
     if buyer not in USER_RESOURCES:
         USER_RESOURCES[buyer] = {"cpu": 0, "ram": 0}
     USER_RESOURCES[buyer]["cpu"] += cpu
     USER_RESOURCES[buyer]["ram"] += ram
 
-    # Kreiraj zahtjev za resurse i dodaj ga u RESOURCE_REQUESTS
     RESOURCE_REQUESTS.append({
         "buyer": buyer,
         "cpu": cpu,
         "ram": ram,
         "timestamp": int(time.time())
     })
-
+    logging.info(f"Resursi kupljeni: Kupac {buyer}, CPU {cpu}, RAM {ram} MB, Prodavač {seller}")
     return jsonify({"message": "Resursi kupljeni", "balance": wallets[buyer]}), 200
 
-# 📌 Preuzimanje balansa korisnika
 def get_balance(address):
     wallets = load_wallets()
     return wallets.get(address, 0)
 
-# 📌 Preuzimanje korisničkih resursa
 def get_user_resources(user):
     resources = USER_RESOURCES.get(user, {"cpu": 0, "ram": 0})
     return jsonify({"message": "Resursi korisnika", "resources": resources}), 200
 
-# 📌 Preuzimanje zahtjeva za resurse
 def get_resource_requests():
     return jsonify({"requests": RESOURCE_REQUESTS}), 200
 
-# 📌 Čuvanje i učitavanje wallet-a
 def load_wallets():
     try:
         with open(WALLETS_FILE, "r") as f:
-            return json.load(f)
+            wallets = json.load(f)
+            logging.info("Walletovi uspješno učitani.")
+            return wallets
     except (FileNotFoundError, json.JSONDecodeError):
+        logging.warning("Wallet datoteka ne postoji ili je oštećena, kreiram novu.")
         return {}
 
 def save_wallets(wallets):
-    with open(WALLETS_FILE, "w") as f:
-        json.dump(wallets, f, indent=4)
+    try:
+        with open(WALLETS_FILE, "w") as f:
+            json.dump(wallets, f, indent=4)
+        logging.info("Walletovi uspješno spremljeni.")
+    except Exception as e:
+        logging.error(f"Greška pri spremanju walletova: {e}")

@@ -152,6 +152,12 @@ def get_balance(address):
     return jsonify({"balance": balance}), 200
 
 
+# 📡 **API Endpoint za dobijanje celog blockchaina** 🔥 **(Ispravka za 404 grešku)**
+@app.route('/chain', methods=['GET'])
+def get_chain():
+    return jsonify([block.__dict__ for block in blockchain.chain]), 200
+
+
 # 📡 **Emitovanje novog bloka svim čvorovima**
 def broadcast_block(block):
     for peer in PEERS:

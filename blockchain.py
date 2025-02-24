@@ -41,10 +41,18 @@ class Block:
 
 class Blockchain:
     def __init__(self):
-        # Uklonjen je argument, load_blockchain sada ne prima nikakve parametre.
         self.chain = load_blockchain()
-        # Ako učitani lanac sadrži samo dict-ove (npr. iz JSON fajla), možemo ga po potrebi pretvoriti u Block objekte.
-        self.chain = [Block(**block) if isinstance(block, dict) else block for block in self.chain]
+        # Pretvaranje učitanog blockchaina (lista dict-ova) u objekte klase Block,
+        # uklanjanjem ključa "hash" iz svakog dictionary-ja.
+        new_chain = []
+        for block in self.chain:
+            if isinstance(block, dict):
+                block_copy = block.copy()
+                block_copy.pop("hash", None)
+                new_chain.append(Block(**block_copy))
+            else:
+                new_chain.append(block)
+        self.chain = new_chain
 
     def add_block(self, transactions, resource_tasks, miner):
         new_block = self.mine_block(self.chain[-1], transactions, resource_tasks, miner)

@@ -1,67 +1,100 @@
 import time
 import json
+import hashlib
 import threading
+import requests
+import psutil
 from flask import Flask, request, jsonify
-from flask_socketio import SocketIO
-from functions import *  # 📌 Importujemo sve funkcije
+from flask_socketio import SocketIO, emit
+from functions import add_balance, buy_resources, get_balance, get_user_resources, get_resource_requests, save_blockchain, load_blockchain
 
 # 🔧 Konfiguracija blockchaina
+DIFFICULTY = 4
+PEERS = []
+RESOURCE_REWARD = 5
+RESOURCE_PRICE = 2
+
 app = Flask(__name__)
 socketio = SocketIO(app)
-blockchain = load_blockchain() or [{"index": 0, "previous_hash": "0", "timestamp": int(time.time()), "transactions": [], "miner": "GENESIS", "nonce": 0, "hash": "0"}]
 
-# 📡 **Pregled kupljenih resursa korisnika**
-@app.route('/user_resources/<user>', methods=['GET'])
-def user_resources(user):
-    user_res = get_user_resources(user)
-    if not user_res:
-        return jsonify({"message": "Korisnik nema kupljene resurse."}), 404
-    return jsonify({"message": "Pregled resursa", "resources": user_res}), 200
 
-# 📡 **Dodavanje CPU/RAM zahteva**
-@app.route('/resource_request', methods=['POST'])
-def add_request():
-    data = request.json
-    requester, cpu_needed, ram_needed = data.get("requester"), data.get("cpu_needed"), data.get("ram_needed")
-    if not all([requester, cpu_needed, ram_needed]):
-        return jsonify({"error": "Neispravni podaci"}), 400
-    return jsonify({"requests": add_resource_request(requester, cpu_needed, ram_needed)}), 200
+class Block:
+    def __init__(self, index, previous_hash, timestamp, transactions, resource_tasks, miner, reward, nonce):
+        self.index = index
+        self.previous_hash = previous_hash
+        self.timestamp = timestamp
+        self.transactions = transactions
+        self.resource_tasks = resource_tasks
+        self.miner = miner
+        self.reward = reward
+        self.nonce = nonce
+        self.hash = self.calculate_hash()
 
-# 📡 **Kupovina CPU/RAM resursa koristeći coin**
-@app.route('/buy_resources', methods=['POST'])
-def buy_resources():
-    data = request.json
-    buyer, cpu_amount, ram_amount, seller = data.get("buyer"), data.get("cpu"), data.get("ram"), data.get("seller")
+    def calculate_hash(self):
+        data_str = f"{self.index}{self.previous_hash}{self.timestamp}{self.transactions}{self.resource_tasks}{self.miner}{self.reward}{self.nonce}".encode()
+        return hashlib.sha256(data_str).hexdigest()
 
-    if not all([buyer, cpu_amount, ram_amount, seller]):
-        return jsonify({"error": "Neispravni podaci"}), 400
 
-    if get_user_balance(buyer) < (cpu_amount + ram_amount) * 2:
-        return jsonify({"error": "Nedovoljno coina za kupovinu"}), 400
+class Blockchain:
+    def __init__(self):
+        self.chain = load_blockchain(Block)
 
-    add_user_balance(buyer, -((cpu_amount + ram_amount) * 2))
-    add_user_balance(seller, (cpu_amount + ram_amount) * 2)
+    def add_block(self, transactions, resource_tasks, miner):
+        new_block = self.mine_block(self.chain[-1], transactions, resource_tasks, miner)
+        self.chain.append(new_block)
+        save_blockchain(self)
+        return new_block
 
-    return jsonify({"message": "Uspešno kupljeni resursi", "balance": get_user_balance(buyer)}), 200
+    def mine_block(self, previous_block, transactions, resource_tasks, miner):
+        index = previous_block.index + 1
+        timestamp = int(time.time())
+        previous_hash = previous_block.hash
+        nonce = 0
+        prefix = "0" * DIFFICULTY
 
-# 📡 **Provera balansa korisnika**
-@app.route('/balance/<address>', methods=['GET'])
-def get_balance(address):
-    return jsonify({"balance": get_user_balance(address)}), 200
+        while True:
+            new_block = Block(index, previous_hash, timestamp, transactions, resource_tasks, miner, RESOURCE_REWARD, nonce)
+            if new_block.hash.startswith(prefix):
+                print(f"✅ Blok {index} iskopan | Rudar: {miner} | Nagrada: {RESOURCE_REWARD} coins | Hash: {new_block.hash}")
+                return new_block
+            nonce += 1
 
-# 📡 **Dodavanje balansa korisniku**
+
+blockchain = Blockchain()
+
+
+# 📡 API endpointi
 @app.route('/add_balance', methods=['POST'])
-def add_balance():
+def api_add_balance():
     data = request.json
-    user_address, amount = data.get("user"), data.get("amount")
-    if not all([user_address, amount]):
-        return jsonify({"message": "Nedostaju parametri"}), 400
-    return jsonify({"message": f"{amount} coina dodato korisniku {user_address}", "balance": add_user_balance(user_address, amount)}), 200
+    return add_balance(data.get("user"), data.get("amount"))
 
-# 📡 **API Endpoint za preuzimanje blockchaina**
+
+@app.route('/buy_resources', methods=['POST'])
+def api_buy_resources():
+    data = request.json
+    return buy_resources(data.get("buyer"), data.get("cpu"), data.get("ram"), data.get("seller"))
+
+
+@app.route('/balance/<address>', methods=['GET'])
+def api_get_balance(address):
+    return jsonify({"balance": get_balance(address)})
+
+
+@app.route('/user_resources/<user>', methods=['GET'])
+def api_get_user_resources(user):
+    return get_user_resources(user)
+
+
+@app.route('/resource_request', methods=['GET'])
+def api_get_resource_requests():
+    return get_resource_requests()
+
+
 @app.route('/chain', methods=['GET'])
 def get_chain():
-    return jsonify(blockchain), 200
+    return jsonify([block.__dict__ for block in blockchain.chain]), 200
+
 
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000)

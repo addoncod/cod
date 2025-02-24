@@ -120,6 +120,35 @@ def api_get_user_resources(user):
 @app.route('/resource_request', methods=['GET'])
 def api_get_resource_requests():
     return get_resource_requests()
+@app.route('/mine', methods=['POST'])
+def api_submit_block():
+    block_data = request.json
+    # Osnovna validacija podataka (možete proširiti validaciju prema potrebi)
+    required_fields = ["index", "previous_hash", "timestamp", "resource_tasks", "nonce", "hash", "miner"]
+    if not all(field in block_data for field in required_fields):
+        return jsonify({"error": "Neispravni podaci bloka"}), 400
+
+    # Možete dodati dodatnu validaciju, npr. provjeru hash-a, prethodnog bloka itd.
+    try:
+        new_block = Block(
+            index=block_data["index"],
+            previous_hash=block_data["previous_hash"],
+            timestamp=block_data["timestamp"],
+            transactions=block_data.get("transactions", []),
+            resource_tasks=block_data.get("resource_tasks", []),
+            miner=block_data["miner"],
+            reward=RESOURCE_REWARD,  # ili koristiti block_data["reward"] ako se šalje
+            nonce=block_data["nonce"]
+        )
+    except Exception as e:
+        return jsonify({"error": f"Greška pri kreiranju bloka: {e}"}), 400
+
+    # Jednostavno dodajemo blok na kraj lanca (bez dodatne provjere)
+    blockchain.chain.append(new_block)
+    save_blockchain(blockchain.chain)
+
+    print(f"✅ Blok {new_block.index} primljen i dodan u lanac.")
+    return jsonify({"message": "Blok primljen", "block": new_block.__dict__}), 200
 
 @app.route('/chain', methods=['GET'])
 def get_chain():

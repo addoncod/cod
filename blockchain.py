@@ -85,6 +85,23 @@ def api_get_balance(address):
 def api_get_user_resources(user):
     return get_user_resources(user)
 
+@app.route('/register_miner', methods=['POST'])
+def register_miner():
+    """Registracija rudara i njihovih resursa"""
+    data = request.json
+    miner_id = data.get("miner_id")
+    cpu_available = data.get("cpu_available")
+    ram_available = data.get("ram_available")
+
+    if not all([miner_id, cpu_available, ram_available]):
+        return jsonify({"error": "Neispravni podaci"}), 400
+
+    MINERS[miner_id] = {"cpu": cpu_available, "ram": ram_available}
+    WALLETS.setdefault(miner_id, 0)  # ✅ Kreira novčanik ako ne postoji
+
+    return jsonify({"message": "Miner registrovan", "miners": MINERS}), 200
+
+
 
 @app.route('/resource_request', methods=['GET'])
 def api_get_resource_requests():

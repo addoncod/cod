@@ -7,11 +7,11 @@ from datasets import load_dataset  # Hugging Face API za AI zadatke
 from flask import Flask, request, jsonify
 from flask_socketio import SocketIO, emit
 
-# 🔧 Konfiguracija blockchain-a
+# ⚡ Konfiguracija blockchain-a
 DIFFICULTY = 4
 PEERS = []
 PENDING_TRANSACTIONS = []
-PENDING_AI_TASKS = []  # **AI zadaci koji čekaju rudarenje**
+PENDING_AI_TASKS = []  # ✨ Lista AI zadataka koji čekaju rudarenje
 AI_DATASET = "imdb"  # Hugging Face dataset
 
 app = Flask(__name__)
@@ -24,7 +24,7 @@ class Block:
         self.previous_hash = previous_hash
         self.timestamp = timestamp
         self.transactions = transactions
-        self.ai_tasks = ai_tasks  # **Sada blok može sadržati AI zadatke**
+        self.ai_tasks = ai_tasks  # ✅ Blok sada podržava AI zadatke
         self.nonce = nonce
         self.hash = self.calculate_hash()
 
@@ -49,23 +49,24 @@ class Blockchain:
 blockchain = Blockchain()
 
 
-# 🔄 **Automatsko preuzimanje AI zadataka sa Hugging Face**
+# ⚙️ Automatsko preuzimanje AI zadataka sa Hugging Face API-ja
 def fetch_ai_task():
     while True:
         print("🔍 Preuzimam AI zadatak sa Hugging Face...")
         try:
             dataset = load_dataset(AI_DATASET, split="train")
-            sample = dataset.shuffle(seed=int(time.time())).select([0])  # Uzima slučajan primer
+            sample = dataset.shuffle(seed=int(time.time())).select([0])  # Nasumičan AI zadatak
             task_text = sample[0]['text']
-            PENDING_AI_TASKS.append({"task": task_text, "solution": "TBD"})  # "TBD" (to be determined)
-            print(f"📜 Novi AI zadatak dodat u mempool: {task_text[:100]}...")
+            PENDING_AI_TASKS.append({"task": task_text, "solution": "TBD"})
+            print(f"📜 Novi AI zadatak dodat: {task_text[:100]}...")
         except Exception as e:
             print("❌ Greška pri preuzimanju AI zadatka!", e)
 
-        time.sleep(30)  # ✅ **Svakih 30 sekundi preuzima novi AI zadatak**
+        time.sleep(30)  # ✅ Svakih 30 sekundi dodaje novi AI zadatak
 
 
-# ⛏ **Rudarenje bloka sa AI zadatkom**
+# ⛏ Rudarenje bloka
+
 def mine_block(previous_block, transactions, ai_tasks, difficulty=DIFFICULTY):
     index = previous_block.index + 1
     timestamp = int(time.time())
@@ -81,25 +82,31 @@ def mine_block(previous_block, transactions, ai_tasks, difficulty=DIFFICULTY):
         nonce += 1
 
 
-# 📡 **Endpoint za dobijanje AI zadataka**
+# 📡 Endpoint za dobijanje AI zadataka
 @app.route('/ai_tasks', methods=['GET'])
 def get_ai_tasks():
     return jsonify({"ai_tasks": PENDING_AI_TASKS}), 200
 
 
-# 📡 **Endpoint za rudarenje (miner preuzima zadatak)**
+# 📡 Endpoint za rudarenje (miner preuzima zadatak)
 @app.route('/mine', methods=['POST'])
 def mine():
     if not PENDING_AI_TASKS:
         return jsonify({"message": "Nema AI zadataka za rudarenje"}), 400
 
-    ai_task = PENDING_AI_TASKS.pop(0)  # ✅ Uklanja prvi zadatak iz liste
+    ai_task = PENDING_AI_TASKS.pop(0)  # ✅ Skida prvi AI zadatak
     new_block = blockchain.add_block([], [ai_task])
     broadcast_block(new_block)
     return jsonify(new_block.__dict__), 200
 
 
-# 📡 **Emitovanje novog bloka svim čvorovima**
+# 📡 Endpoint za dohvaćanje blockchaina
+@app.route('/chain', methods=['GET'])
+def get_chain():
+    return jsonify([block.__dict__ for block in blockchain.chain]), 200
+
+
+# 📡 Emitovanje novog bloka svim čvorovima
 def broadcast_block(block):
     for peer in PEERS:
         try:

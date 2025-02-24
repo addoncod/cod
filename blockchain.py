@@ -4,18 +4,20 @@ import hashlib
 import threading
 import requests
 import psutil
+import ecdsa
 from flask import Flask, request, jsonify
 from flask_socketio import SocketIO, emit
 
-# 🔧 Konfiguracija blockchaina
+# 🔧 Blockchain konfiguracija
 DIFFICULTY = 4
 PEERS = []
 PENDING_TRANSACTIONS = []
-RESOURCE_REQUESTS = []  # 📌 Korisnici koji žele da koriste CPU/RAM
-MINERS = {}  # 📌 Rudari i njihovi dostupni resursi
-WALLETS = {}  # 💳 Balans korisnika u coinima
-RESOURCE_REWARD = 5  # 💰 Nagrada za deljenje CPU/RAM
-RESOURCE_PRICE = 2  # 💲 Cena CPU/RAM resursa po jedinici
+RESOURCE_REQUESTS = []
+MINERS = {}
+WALLETS = {}
+BLOCKCHAIN_FILE = "blockchain_data.json"
+RESOURCE_REWARD = 5
+RESOURCE_PRICE = 2
 
 app = Flask(__name__)
 socketio = SocketIO(app)
@@ -27,9 +29,9 @@ class Block:
         self.previous_hash = previous_hash
         self.timestamp = timestamp
         self.transactions = transactions
-        self.resource_tasks = resource_tasks  # 💾 CPU/RAM zadaci
-        self.miner = miner  # ⛏ Adresa rudara
-        self.reward = reward  # 💰 Nagrada rudaru
+        self.resource_tasks = resource_tasks
+        self.miner = miner
+        self.reward = reward
         self.nonce = nonce
         self.hash = self.calculate_hash()
 
@@ -40,59 +42,92 @@ class Block:
 
 class Blockchain:
     def __init__(self):
-        self.chain = [self.create_genesis_block()]
+        self.chain = self.load_blockchain()
 
     def create_genesis_block(self):
         return Block(0, "0", int(time.time()), [], [], "GENESIS", 0, 0)
 
+    def load_blockchain(self):
+        try:
+            with open(BLOCKCHAIN_FILE, "r") as f:
+                return [Block(**block) for block in json.load(f)]
+        except (FileNotFoundError, json.JSONDecodeError):
+            return [self.create_genesis_block()]
+
+    def save_blockchain(self):
+        with open(BLOCKCHAIN_FILE, "w") as f:
+            json.dump([block.__dict__ for block in self.chain], f, indent=4)
+
     def add_block(self, transactions, resource_tasks, miner):
         new_block = mine_block(self.chain[-1], transactions, resource_tasks, miner)
         self.chain.append(new_block)
+        self.save_blockchain()
+        broadcast_block(new_block)
         return new_block
 
 
 blockchain = Blockchain()
 
 
-# 📡 **Registracija rudara i njihovih resursa**
-@app.route('/register_miner', methods=['POST'])
-def register_miner():
-    data = request.json
-    miner_id = data.get("miner_id")
-    cpu_available = data.get("cpu_available")
-    ram_available = data.get("ram_available")
+# 📡 **P2P Mreža**
+@app.route('/connect', methods=['POST'])
+def connect():
+    peer = request.json.get("peer")
+    if peer and peer not in PEERS:
+        PEERS.append(peer)
+    return jsonify({"message": "Povezan na mrežu", "peers": PEERS}), 200
 
-    if not all([miner_id, cpu_available, ram_available]):
+
+@app.route('/peers', methods=['GET'])
+def get_peers():
+    return jsonify({"peers": PEERS}), 200
+
+
+# 📡 **Zaštita od duplih troškova**
+@app.route('/validate_transaction', methods=['POST'])
+def validate_transaction():
+    tx = request.json
+    sender = tx.get("sender")
+    amount = tx.get("amount")
+
+    if not sender or amount is None:
         return jsonify({"error": "Neispravni podaci"}), 400
 
-    MINERS[miner_id] = {"cpu": cpu_available, "ram": ram_available}
-    WALLETS.setdefault(miner_id, 0)  # ✅ Kreiraj novčanik ako ne postoji
+    if WALLETS.get(sender, 0) < amount:
+        return jsonify({"error": "Nedovoljno sredstava"}), 400
 
-    return jsonify({"message": "Miner registrovan", "miners": MINERS}), 200
-
-
-# 📡 **Pregled rudara i dostupnih resursa**
-@app.route('/miners', methods=['GET'])
-def get_miners():
-    return jsonify({"miners": MINERS}), 200
+    return jsonify({"message": "Transakcija validna"}), 200
 
 
-# 📡 **Dodavanje CPU/RAM zahteva**
-@app.route('/resource_request', methods=['POST'])
-def add_resource_request():
-    data = request.json
-    requester = data.get("requester")
-    cpu_needed = data.get("cpu_needed")
-    ram_needed = data.get("ram_needed")
-
-    if not all([requester, cpu_needed, ram_needed]):
-        return jsonify({"error": "Neispravni podaci"}), 400
-
-    RESOURCE_REQUESTS.append({"requester": requester, "cpu": cpu_needed, "ram": ram_needed})
-    return jsonify({"message": "Zahtev za CPU/RAM dodat", "requests": RESOURCE_REQUESTS}), 200
+# 📡 **Kriptografski potpisi za transakcije**
+def sign_transaction(private_key, transaction):
+    sk = ecdsa.SigningKey.from_string(bytes.fromhex(private_key), curve=ecdsa.SECP256k1)
+    signature = sk.sign(json.dumps(transaction, sort_keys=True).encode()).hex()
+    return signature
 
 
-# 📡 **Kupovina CPU/RAM resursa koristeći coin**
+@app.route('/transaction', methods=['POST'])
+def receive_transaction():
+    tx = request.json
+    sender_pub_key = tx.get("public_key")
+    signature = tx.get("signature")
+
+    if not sender_pub_key or not signature:
+        return jsonify({"error": "Nedostaju podaci"}), 400
+
+    vk = ecdsa.VerifyingKey.from_string(bytes.fromhex(sender_pub_key), curve=ecdsa.SECP256k1)
+    tx_copy = tx.copy()
+    del tx_copy["signature"]
+
+    try:
+        vk.verify(bytes.fromhex(signature), json.dumps(tx_copy, sort_keys=True).encode())
+        PENDING_TRANSACTIONS.append(tx)
+        return jsonify({"message": "Transakcija prihvaćena"}), 200
+    except ecdsa.BadSignatureError:
+        return jsonify({"error": "Nevalidan potpis"}), 400
+
+
+# 📡 **Kupovina CPU/RAM resursa**
 @app.route('/buy_resources', methods=['POST'])
 def buy_resources():
     data = request.json
@@ -112,16 +147,8 @@ def buy_resources():
     if WALLETS.get(buyer, 0) < total_price:
         return jsonify({"error": "Nedovoljno coina za kupovinu"}), 400
 
-    # ✅ Prenos coina
     WALLETS[buyer] -= total_price
     WALLETS[seller] += total_price
-
-    # ✅ Dodela resursa kupcu
-    if buyer not in MINERS:
-        MINERS[buyer] = {"cpu": 0, "ram": 0}
-
-    MINERS[buyer]["cpu"] += cpu_amount
-    MINERS[buyer]["ram"] += ram_amount
 
     RESOURCE_REQUESTS.append({
         "requester": buyer,
@@ -129,15 +156,10 @@ def buy_resources():
         "ram": ram_amount
     })
 
-    return jsonify({
-        "message": "Uspešno kupljeni resursi",
-        "balance": WALLETS[buyer],
-        "resources": MINERS[buyer],
-        "active_requests": RESOURCE_REQUESTS
-    }), 200
+    return jsonify({"message": "Uspešno kupljeni resursi"}), 200
 
 
-# 📡 **Endpoint za rudarenje**
+# 📡 **Rudarenje**
 @app.route('/mine', methods=['POST'])
 def mine():
     data = request.json
@@ -163,34 +185,33 @@ def get_balance(address):
     return jsonify({"balance": balance}), 200
 
 
-# 📡 **Dodavanje balansa korisniku (testiranje)**
-@app.route('/add_balance', methods=['POST'])
-def add_balance():
-    data = request.json
-    user_address = data.get("user")
-    amount = data.get("amount")
-
-    if not all([user_address, amount]):
-        return jsonify({"message": "Nedostaju parametri"}), 400
-
-    WALLETS[user_address] = WALLETS.get(user_address, 0) + amount
-
-    return jsonify({"message": f"{amount} coina dodato korisniku {user_address}", "balance": WALLETS[user_address]}), 200
-
-
-# 📡 **API Endpoint za dobijanje celog blockchaina**
+# 📡 **API Endpoint za preuzimanje blockchaina**
 @app.route('/chain', methods=['GET'])
 def get_chain():
     return jsonify([block.__dict__ for block in blockchain.chain]), 200
 
 
-# 📡 **Emitovanje novog bloka svim čvorovima**
+# 📡 **Emitovanje bloka u P2P mrežu**
 def broadcast_block(block):
     for peer in PEERS:
         try:
-            requests.post(f"{peer}/mine", json=block.__dict__)
+            requests.post(f"{peer}/new_block", json=block.__dict__)
         except requests.exceptions.RequestException:
             pass
+
+
+@app.route('/new_block', methods=['POST'])
+def receive_new_block():
+    block_data = request.json
+    new_block = Block(**block_data)
+
+    last_block = blockchain.chain[-1]
+    if new_block.previous_hash == last_block.hash:
+        blockchain.chain.append(new_block)
+        blockchain.save_blockchain()
+        return jsonify({"message": "Blok prihvaćen"}), 200
+    else:
+        return jsonify({"error": "Nevalidan blok"}), 400
 
 
 if __name__ == '__main__':

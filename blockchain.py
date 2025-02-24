@@ -159,25 +159,29 @@ def get_balance(address):
     balance = WALLETS.get(address, 0)
     return jsonify({"balance": balance}), 200
 
-# 📡 **Dodavanje balansa korisniku (samo za testiranje)**
 @app.route('/add_balance', methods=['POST'])
 def add_balance():
-    data = request.json
-    user_address = data.get("user")
-    amount = data.get("amount")
+    try:
+        data = request.get_json()
+        user_address = data.get("user")
+        amount = data.get("amount")
 
-    if not user_address or amount is None:
-        return jsonify({"message": "Nedostaju parametri"}), 400
+        if not user_address or amount is None:
+            return jsonify({"message": "Nedostaju parametri"}), 400
 
-    # Dodajemo testne tokene kao transakciju u blockchain
-    new_block = blockchain.add_block(
-        transactions=[{"sender": "SYSTEM", "recipient": user_address, "amount": amount}],
-        ai_tasks=[],
-        resource_tasks=[],
-        miner="SYSTEM"
-    )
+        # Dodajemo testne tokene kao transakciju u blockchain
+        new_block = blockchain.add_block(
+            transactions=[{"sender": "SYSTEM", "recipient": user_address, "amount": amount}],
+            ai_tasks=[],
+            resource_tasks=[],
+            miner="SYSTEM"
+        )
+
+        return jsonify({"message": f"{amount} coina dodato korisniku {user_address}", "new_block": new_block.__dict__}), 200
     
-    return jsonify({"message": f"{amount} coina dodato korisniku {user_address}", "new_block": new_block.__dict__}), 200
+    except Exception as e:
+        return jsonify({"error": f"Greška na serveru: {str(e)}"}), 500
+
 
 # 📡 **API Endpoint za dobijanje celog blockchaina**
 @app.route('/chain', methods=['GET'])

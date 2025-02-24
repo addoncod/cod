@@ -12,7 +12,7 @@ DIFFICULTY = 4
 PEERS = []
 PENDING_TRANSACTIONS = []
 PENDING_AI_TASKS = []
-AI_REWARD = 10  # 💰 Nagrada za rudare
+AI_REWARD = 10  # 💰 Nagrada za AI rudarenje
 AI_DATASET = "imdb"
 
 app = Flask(__name__)
@@ -25,9 +25,9 @@ class Block:
         self.previous_hash = previous_hash
         self.timestamp = timestamp
         self.transactions = transactions
-        self.ai_tasks = ai_tasks
-        self.miner = miner  # 🏆 Adresa rudara
-        self.reward = reward  # 💰 Nagrada
+        self.ai_tasks = ai_tasks  # 🧠 AI zadaci u bloku
+        self.miner = miner  # ⛏ Adresa rudara
+        self.reward = reward  # 💰 Nagrada rudaru
         self.nonce = nonce
         self.hash = self.calculate_hash()
 
@@ -74,6 +74,12 @@ def get_ai_tasks():
     if not PENDING_AI_TASKS:
         return jsonify({"message": "Trenutno nema AI zadataka"}), 200
     return jsonify({"ai_tasks": PENDING_AI_TASKS}), 200
+
+
+# 📡 **Endpoint za dobijanje celog blockchaina**
+@app.route('/chain', methods=['GET'])
+def get_chain():
+    return jsonify([block.__dict__ for block in blockchain.chain]), 200
 
 
 # ⛏ **Rudarenje bloka sa AI zadatkom + nagrada**

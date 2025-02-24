@@ -9,7 +9,7 @@ from flask_socketio import SocketIO, emit
 DIFFICULTY = 4
 PEERS = []
 PENDING_TRANSACTIONS = []
-PENDING_AI_TASKS = []  # ✅ Sada AI zadaci čekaju pre nego što budu rudareni
+PENDING_AI_TASKS = []  # ✅ AI zadaci sada čekaju pre rudarenja!
 
 app = Flask(__name__)
 socketio = SocketIO(app)
@@ -20,7 +20,7 @@ class Block:
         self.previous_hash = previous_hash
         self.timestamp = timestamp
         self.transactions = transactions
-        self.ai_tasks = ai_tasks  # ✅ AI zadaci sada su deo bloka
+        self.ai_tasks = ai_tasks  # ✅ AI zadaci su deo bloka!
         self.nonce = nonce
         self.hash = self.calculate_hash()
 
@@ -42,7 +42,7 @@ class Blockchain:
 
 blockchain = Blockchain()
 
-# 🔥 Popravljena funkcija za rudarenje AI blokova
+# ✅ Funkcija za rudarenje AI blokova
 def mine_block(previous_block, transactions, ai_tasks, difficulty=DIFFICULTY):
     index = previous_block.index + 1
     timestamp = int(time.time())
@@ -56,21 +56,21 @@ def mine_block(previous_block, transactions, ai_tasks, difficulty=DIFFICULTY):
             return new_block
         nonce += 1
 
-# ✅ Endpoint za dodavanje AI zadataka (ručno ili iz eksternog API-ja)
+# ✅ API za dodavanje AI zadatka na blockchain (admin ili eksterni API)
 @app.route('/ai_task', methods=['POST'])
 def receive_ai_task():
     task = request.json
-    if "task" in task and "solution" in task:
+    if "task" in task:
         PENDING_AI_TASKS.append(task)
         return jsonify({"message": "AI zadatak primljen"}), 200
     return jsonify({"error": "Neispravan AI zadatak"}), 400
 
-# ✅ Endpoint za preuzimanje AI zadataka
+# ✅ Rudari sada mogu dobiti AI zadatke od servera
 @app.route('/ai_tasks', methods=['GET'])
 def get_ai_tasks():
     return jsonify({"ai_tasks": PENDING_AI_TASKS}), 200
 
-# ✅ Popravljena funkcija rudarenja (sada proverava AI zadatke)
+# ✅ Popravljena funkcija rudarenja (AI zadaci su sada deo blockchaina)
 @app.route('/mine', methods=['POST'])
 def mine():
     if not PENDING_TRANSACTIONS and not PENDING_AI_TASKS:
@@ -78,7 +78,7 @@ def mine():
 
     new_block = blockchain.add_block(PENDING_TRANSACTIONS.copy(), PENDING_AI_TASKS.copy())
     PENDING_TRANSACTIONS.clear()
-    PENDING_AI_TASKS.clear()  # ✅ Sada brišemo AI zadatke nakon rudarenja!
+    PENDING_AI_TASKS.clear()  # ✅ AI zadaci se brišu nakon rudarenja!
     broadcast_block(new_block)
     return jsonify(new_block.__dict__), 200
 

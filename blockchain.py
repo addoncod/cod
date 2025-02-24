@@ -12,7 +12,7 @@ from flask_socketio import SocketIO, emit
 DIFFICULTY = 4
 PEERS = []
 PENDING_TRANSACTIONS = []
-RESOURCE_REQUESTS = []
+RESOURCE_REQUESTS = []  # 📌 Lista CPU/RAM zahteva
 MINERS = {}
 WALLETS = {}
 BLOCKCHAIN_FILE = "blockchain_data.json"
@@ -69,65 +69,28 @@ class Blockchain:
 blockchain = Blockchain()
 
 
-# 📡 **P2P Mreža**
-@app.route('/connect', methods=['POST'])
-def connect():
-    peer = request.json.get("peer")
-    if peer and peer not in PEERS:
-        PEERS.append(peer)
-    return jsonify({"message": "Povezan na mrežu", "peers": PEERS}), 200
+# 📡 **CPU/RAM tržište - Pregled zahteva**
+@app.route('/resource_request', methods=['GET'])
+def get_resource_requests():
+    return jsonify({"requests": RESOURCE_REQUESTS}), 200
 
 
-@app.route('/peers', methods=['GET'])
-def get_peers():
-    return jsonify({"peers": PEERS}), 200
+# 📡 **Dodavanje CPU/RAM zahteva**
+@app.route('/resource_request', methods=['POST'])
+def add_resource_request():
+    data = request.json
+    requester = data.get("requester")
+    cpu_needed = data.get("cpu_needed")
+    ram_needed = data.get("ram_needed")
 
-
-# 📡 **Zaštita od duplih troškova**
-@app.route('/validate_transaction', methods=['POST'])
-def validate_transaction():
-    tx = request.json
-    sender = tx.get("sender")
-    amount = tx.get("amount")
-
-    if not sender or amount is None:
+    if not all([requester, cpu_needed, ram_needed]):
         return jsonify({"error": "Neispravni podaci"}), 400
 
-    if WALLETS.get(sender, 0) < amount:
-        return jsonify({"error": "Nedovoljno sredstava"}), 400
-
-    return jsonify({"message": "Transakcija validna"}), 200
+    RESOURCE_REQUESTS.append({"requester": requester, "cpu": cpu_needed, "ram": ram_needed})
+    return jsonify({"message": "Zahtev za CPU/RAM dodat", "requests": RESOURCE_REQUESTS}), 200
 
 
-# 📡 **Kriptografski potpisi za transakcije**
-def sign_transaction(private_key, transaction):
-    sk = ecdsa.SigningKey.from_string(bytes.fromhex(private_key), curve=ecdsa.SECP256k1)
-    signature = sk.sign(json.dumps(transaction, sort_keys=True).encode()).hex()
-    return signature
-
-
-@app.route('/transaction', methods=['POST'])
-def receive_transaction():
-    tx = request.json
-    sender_pub_key = tx.get("public_key")
-    signature = tx.get("signature")
-
-    if not sender_pub_key or not signature:
-        return jsonify({"error": "Nedostaju podaci"}), 400
-
-    vk = ecdsa.VerifyingKey.from_string(bytes.fromhex(sender_pub_key), curve=ecdsa.SECP256k1)
-    tx_copy = tx.copy()
-    del tx_copy["signature"]
-
-    try:
-        vk.verify(bytes.fromhex(signature), json.dumps(tx_copy, sort_keys=True).encode())
-        PENDING_TRANSACTIONS.append(tx)
-        return jsonify({"message": "Transakcija prihvaćena"}), 200
-    except ecdsa.BadSignatureError:
-        return jsonify({"error": "Nevalidan potpis"}), 400
-
-
-# 📡 **Kupovina CPU/RAM resursa**
+# 📡 **Kupovina CPU/RAM resursa koristeći coin**
 @app.route('/buy_resources', methods=['POST'])
 def buy_resources():
     data = request.json
@@ -159,7 +122,7 @@ def buy_resources():
     return jsonify({"message": "Uspešno kupljeni resursi"}), 200
 
 
-# 📡 **Rudarenje**
+# 📡 **Rudarenje bloka**
 @app.route('/mine', methods=['POST'])
 def mine():
     data = request.json
@@ -183,6 +146,21 @@ def mine():
 def get_balance(address):
     balance = WALLETS.get(address, 0)
     return jsonify({"balance": balance}), 200
+
+
+# 📡 **Dodavanje balansa korisniku (testiranje)**
+@app.route('/add_balance', methods=['POST'])
+def add_balance():
+    data = request.json
+    user_address = data.get("user")
+    amount = data.get("amount")
+
+    if not all([user_address, amount]):
+        return jsonify({"message": "Nedostaju parametri"}), 400
+
+    WALLETS[user_address] = WALLETS.get(user_address, 0) + amount
+
+    return jsonify({"message": f"{amount} coina dodato korisniku {user_address}", "balance": WALLETS[user_address]}), 200
 
 
 # 📡 **API Endpoint za preuzimanje blockchaina**

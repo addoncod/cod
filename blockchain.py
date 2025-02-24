@@ -157,6 +157,10 @@ def get_balance(address):
 def get_chain():
     return jsonify([block.__dict__ for block in blockchain.chain]), 200
 
+# 📡 **Preuzimanje CPU/RAM zahteva za rudare**
+@app.route('/resource_request', methods=['GET'])
+def get_resource_requests():
+    return jsonify({"requests": RESOURCE_REQUESTS}), 200
 
 # 📡 **Emitovanje novog bloka svim čvorovima**
 def broadcast_block(block):

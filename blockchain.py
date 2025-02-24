@@ -92,6 +92,7 @@ def add_resource_request():
     return jsonify({"message": "Zahtev za CPU/RAM dodat", "requests": RESOURCE_REQUESTS}), 200
 
 
+# 📡 **Kupovina CPU/RAM resursa koristeći coin**
 @app.route('/buy_resources', methods=['POST'])
 def buy_resources():
     data = request.json
@@ -136,6 +137,8 @@ def buy_resources():
         "active_requests": RESOURCE_REQUESTS
     }), 200
 
+
+# 📡 **Provera resursa korisnika**
 @app.route('/user_resources/<user>', methods=['GET'])
 def user_resources(user):
     user_res = [req for req in RESOURCE_REQUESTS if req["requester"] == user]
@@ -146,40 +149,13 @@ def user_resources(user):
     }), 200
 
 
-
 # 📡 **Preuzimanje CPU/RAM zahteva**
 @app.route('/resource_request', methods=['GET'])
 def get_resource_requests():
     return jsonify({"requests": RESOURCE_REQUESTS}), 200
 
 
-# ⛏ **Rudarenje bloka sa CPU/RAM deljenjem**
-def mine_block(previous_block, transactions, resource_tasks, miner, difficulty=DIFFICULTY):
-    index = previous_block.index + 1
-    timestamp = int(time.time())
-    previous_hash = previous_block.hash
-    nonce = 0
-    prefix = "0" * difficulty
-
-    while True:
-        new_block = Block(index, previous_hash, timestamp, transactions, resource_tasks, miner, RESOURCE_REWARD, nonce)
-        if new_block.hash.startswith(prefix):
-            print(f"✅ Blok {index} iskopan | Rudar: {miner} | Nagrada: {RESOURCE_REWARD} coins | Hash: {new_block.hash}")
-
-            # 💰 Dodaj nagradu rudaru
-            WALLETS[miner] = WALLETS.get(miner, 0) + RESOURCE_REWARD
-            return new_block
-        nonce += 1
-
-
-# 📡 **Provera balansa korisnika**
-@app.route('/balance/<address>', methods=['GET'])
-def get_balance(address):
-    balance = WALLETS.get(address, 0)
-    return jsonify({"balance": balance}), 200
-
-
-# 📡 **Dodavanje balansa korisniku (samo za testiranje)**
+# 📡 **Dodavanje balansa korisniku (testiranje)**
 @app.route('/add_balance', methods=['POST'])
 def add_balance():
     data = request.json

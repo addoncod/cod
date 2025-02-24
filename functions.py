@@ -1,83 +1,78 @@
 import json
-import time
-import hashlib
-import requests
 from flask import jsonify
 
-# 🔧 Globalne promenljive
-RESOURCE_REQUESTS = []  # Lista CPU/RAM zahteva
-WALLETS = {}  # Balansi korisnika
-RESOURCE_PRICE = 2  # Cena resursa
 BLOCKCHAIN_FILE = "blockchain_data.json"
+WALLETS_FILE = "wallets.json"
 
 
+# 📌 **Čuva blockchain u JSON fajl**
 def save_blockchain(blockchain):
-    """Snimanje blockchain podataka na disk"""
     with open(BLOCKCHAIN_FILE, "w") as f:
-        json.dump([block.__dict__ for block in blockchain.chain], f, indent=4)
+        json.dump([block.__dict__ for block in blockchain], f, indent=4)
 
 
-def load_blockchain(blockchain_class):
-    """Učitavanje blockchain podataka sa diska"""
+# 📌 **Učitava blockchain iz JSON fajla**
+def load_blockchain():
     try:
         with open(BLOCKCHAIN_FILE, "r") as f:
-            return [blockchain_class(**block) for block in json.load(f)]
+            return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return [blockchain_class(0, "0", int(time.time()), [], [], "GENESIS", 0, 0)]
+        return [{"index": 0, "previous_hash": "0", "timestamp": 0, "transactions": [], "resource_tasks": [], "miner": "GENESIS", "reward": 0, "nonce": 0, "hash": "0"}]
 
 
-def get_balance(user_address):
-    """Vraća balans korisnika"""
-    return WALLETS.get(user_address, 0)
-
-
+# 📌 **Dodavanje balansa korisniku**
 def add_balance(user_address, amount):
-    """Dodaje balans korisniku"""
-    if user_address not in WALLETS:
-        WALLETS[user_address] = 0
-    WALLETS[user_address] += amount
-    return jsonify({"message": f"{amount} coina dodato korisniku {user_address}", "balance": WALLETS[user_address]})
+    if not user_address or amount is None:
+        return jsonify({"message": "Nedostaju parametri"}), 400
+
+    wallets = load_wallets()
+    wallets[user_address] = wallets.get(user_address, 0) + amount
+    save_wallets(wallets)
+
+    return jsonify({"message": f"{amount} coina dodato korisniku {user_address}", "balance": wallets[user_address]}), 200
 
 
+# 📌 **Kupovina resursa**
 def buy_resources(buyer, cpu, ram, seller):
-    """Kupovina CPU/RAM resursa koristeći coin"""
-    if buyer not in WALLETS:
-        return jsonify({"error": "Kupac nije registrovan"}), 400
-    if seller not in WALLETS:
-        return jsonify({"error": "Prodavac nije registrovan"}), 400
-    if cpu <= 0 or ram <= 0:
-        return jsonify({"error": "CPU i RAM moraju biti veći od nule"}), 400
-    if seller not in MINERS:
-        return jsonify({"error": "Prodavac nije rudar"}), 400
+    wallets = load_wallets()
 
-    total_price = (cpu + ram) * RESOURCE_PRICE
+    total_price = (cpu + ram) * 2
+    if wallets.get(buyer, 0) < total_price:
+        return jsonify({"error": "Nedovoljno coina"}), 400
 
-    if WALLETS.get(buyer, 0) < total_price:
-        return jsonify({"error": "Nedovoljno coina za kupovinu"}), 400
+    wallets[buyer] -= total_price
+    wallets[seller] += total_price
 
-    # ✅ Prenos coina
-    WALLETS[buyer] -= total_price
-    WALLETS[seller] += total_price
+    save_wallets(wallets)
 
-    # ✅ Dodaj kupljene resurse korisniku
-    RESOURCE_REQUESTS.append({
-        "requester": buyer,
-        "cpu": cpu,
-        "ram": ram
-    })
+    return jsonify({"message": "Resursi kupljeni", "balance": wallets[buyer]}), 200
 
-    return jsonify({
-        "message": "Uspešno kupljeni resursi",
-        "balance": WALLETS[buyer],
-        "resources": RESOURCE_REQUESTS
-    }), 200
 
+# 📌 **Preuzimanje balansa korisnika**
+def get_balance(address):
+    wallets = load_wallets()
+    return wallets.get(address, 0)
+
+
+# 📌 **Preuzimanje korisničkih resursa**
 def get_user_resources(user):
-    """Pregled kupljenih resursa korisnika"""
-    user_res = [r for r in RESOURCE_REQUESTS if r["requester"] == user]
-    return jsonify({"message": "Pregled resursa", "resources": user_res}), 200
+    return jsonify({"message": "Resursi korisnika", "resources": []}), 200
 
 
+# 📌 **Preuzimanje zahteva za resurse**
 def get_resource_requests():
-    """Vraća listu svih CPU/RAM zahteva"""
-    return jsonify({"requests": RESOURCE_REQUESTS}), 200
+    return jsonify({"requests": []}), 200
+
+
+# 📌 **Čuvanje i učitavanje wallet-a**
+def load_wallets():
+    try:
+        with open(WALLETS_FILE, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_wallets(wallets):
+    with open(WALLETS_FILE, "w") as f:
+        json.dump(wallets, f, indent=4)

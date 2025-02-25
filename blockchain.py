@@ -176,8 +176,10 @@ def api_assign_resources():
 def api_submit_block():
     block_data = request.json
     required_fields = ["index", "previous_hash", "timestamp", "resource_tasks", "nonce", "hash", "miner"]
+
     if not all(field in block_data for field in required_fields):
-        return jsonify({"error": "❌ Neispravni podaci bloka"}), 400
+        logging.error(f"❌ Nedostaju polja u bloku: {block_data}")
+        return jsonify({"error": "Neispravni podaci bloka"}), 400
 
     try:
         new_block = Block(
@@ -192,15 +194,8 @@ def api_submit_block():
         )
     except Exception as e:
         logging.error(f"❌ Greška pri kreiranju bloka: {e}")
-        return jsonify({"error": f"❌ Greška pri kreiranju bloka: {e}"}), 400
+        return jsonify({"error": f"Greška pri kreiranju bloka: {e}"}), 400
 
-    if blockchain.validate_block(new_block, blockchain.chain[-1]):
-        blockchain.chain.append(new_block)
-        save_blockchain([block.to_dict() for block in blockchain.chain])
-        logging.info(f"✅ Blok {new_block.index} primljen i dodan u lanac.")
-        return jsonify({"message": "✅ Blok primljen", "block": new_block.to_dict()}), 200
-    else:
-        return jsonify({"error": "❌ Validacija novog bloka nije uspjela"}), 400
 
 @app.route('/chain', methods=['GET'])
 def get_chain():

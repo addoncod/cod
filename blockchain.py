@@ -177,11 +177,14 @@ def api_submit_block():
     block_data = request.json
     required_fields = ["index", "previous_hash", "timestamp", "resource_tasks", "nonce", "hash", "miner"]
 
-    if not all(field in block_data for field in required_fields):
-        logging.error(f"❌ Nedostaju polja u bloku: {block_data}")
-        return jsonify({"error": "Neispravni podaci bloka"}), 400
+    # ✅ Provjeri da li su sva potrebna polja prisutna
+    missing_fields = [field for field in required_fields if field not in block_data]
+    if missing_fields:
+        logging.error(f"❌ Nedostaju polja u bloku: {missing_fields}")
+        return jsonify({"error": "Neispravni podaci bloka", "missing_fields": missing_fields}), 400
 
     try:
+        # ✅ Pokušaj kreirati novi blok
         new_block = Block(
             index=block_data["index"],
             previous_hash=block_data["previous_hash"],
@@ -192,9 +195,30 @@ def api_submit_block():
             reward=RESOURCE_REWARD,
             nonce=block_data["nonce"]
         )
+
+        # ✅ Provjera da li je hash ispravan
+        calculated_hash = new_block.calculate_hash()
+        if calculated_hash != block_data["hash"]:
+            logging.error(f"❌ Neispravan hash: Očekivan {calculated_hash}, primljen {block_data['hash']}")
+            return jsonify({"error": "Neispravan hash", "expected": calculated_hash, "received": block_data["hash"]}), 400
+
     except Exception as e:
         logging.error(f"❌ Greška pri kreiranju bloka: {e}")
         return jsonify({"error": f"Greška pri kreiranju bloka: {e}"}), 400
+
+    # ✅ Validacija bloka
+    last_block = blockchain.chain[-1]
+    if not blockchain.validate_block(new_block, last_block):
+        logging.error("❌ Validacija novog bloka nije uspjela.")
+        return jsonify({"error": "Validacija bloka nije uspjela"}), 400
+
+    # ✅ Dodaj blok u lanac ako je sve ispravno
+    blockchain.chain.append(new_block)
+    save_blockchain([block.to_dict() for block in blockchain.chain])
+    logging.info(f"✅ Blok {new_block.index} primljen i dodan u lanac.")
+
+    return jsonify({"message": "✅ Blok primljen", "block": new_block.to_dict()}), 200
+
 
 
 @app.route('/chain', methods=['GET'])

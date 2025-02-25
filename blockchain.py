@@ -147,6 +147,10 @@ def api_send_resource_request():
 def api_get_resource_requests():
     return get_resource_requests()
 
+@app.route('/miners', methods=['GET'])
+def get_miners():
+    return jsonify({"miners": REGISTERED_MINERS}), 200
+
 @app.route('/assign_resources', methods=['POST'])
 def api_assign_resources():
     data = request.json

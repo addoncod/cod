@@ -166,6 +166,31 @@ def submit_block():
     MINER_SHARES[new_block.miner] = MINER_SHARES.get(new_block.miner, 0) + 1
     return jsonify({"message": "✅ Blok primljen"}), 200
 
+def resource_usage_session_thread(buyer, cpu, ram, total_minutes=1440):
+    """Obračunava korištenje resursa po minuti i naplatu."""
+    total_cost = 0.00009 * (cpu / 2) * (ram / 2048.0)
+    minute_cost = total_cost / total_minutes
+    fee_per_minute = minute_cost * FEE_PERCENTAGE
+    miner_reward_per_minute = minute_cost - fee_per_minute
+
+    for i in range(total_minutes):
+        wallets = load_wallets()
+        if wallets.get(buyer, 0) < minute_cost:
+            logging.error(f"Nedovoljno sredstava za {buyer}. Naplata prekinuta.")
+            break
+
+        wallets[buyer] -= minute_cost
+        wallets[MAIN_WALLET_ADDRESS] += fee_per_minute
+
+        active_miners = {m_id: MINER_SHARES[m_id] for m_id in MINER_SHARES if m_id in REGISTERED_MINERS}
+        if active_miners:
+            reward_each = miner_reward_per_minute / len(active_miners)
+            for miner_id in active_miners:
+                wallets[miner_id] += reward_each
+
+        save_wallets(wallets)
+        time.sleep(60)
+
 @app.route("/resource_usage_session", methods=["POST"])
 def resource_usage_session():
     """Endpoint za naplatu resursa po minuti."""
@@ -180,7 +205,6 @@ def resource_usage_session():
     if not buyer or cpu <= 0 or ram <= 0:
         return jsonify({"error": "Buyer, CPU i RAM moraju biti veći od 0"}), 400
 
-    # Pokretanje sesije u pozadini
     thread = threading.Thread(target=resource_usage_session_thread, args=(buyer, cpu, ram))
     thread.start()
     return jsonify({"message": "Naplata resursa pokrenuta."}), 200

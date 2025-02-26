@@ -29,23 +29,21 @@ DIFFICULTY = 4
 RESOURCE_REWARD = 5
 
 # Parametri za kupnju Rakia Coina s Monerom (fiksni peg: 1 XMR = 1 Rakia Coin)
-# BASE_CONVERSION_RATE ovdje se ne koristi za dinamički model, već se direktno prenosi potrošeni XMR,
-# uz naplatu fee-ja od 10%.
 FEE_PERCENTAGE = 0.1
 
 # Parametri za izračun vrijednosti CPU i RAM resursa u smislu izrudarenih Monera u 1 sat
-# (primjerice: koliko se Monera izrudari po CPU jedinici i po MB RAM-a u 1 satu rudarenja)
+# (primjer: koliko se Monera izrudari po CPU jedinici i po MB RAM-a u 1 satu rudarenja)
 MONERO_PER_CPU_PER_HOUR = 0.05    # primjer: 0.05 Monera po CPU jedinici (u satu)
 MONERO_PER_RAM_PER_HOUR = 0.001    # primjer: 0.001 Monera po MB RAM-a (u satu)
-# Rakia Coin vrijednost se računa kao 60% potencijalnog prinosa Monera (40% niža)
+# Rakia Coin vrijednost se računa kao 60% potencijalnog prinosa Monera (diskont od 40%)
 DISCOUNT_FACTOR = 0.6
 
-# Globalne varijable vezane uz kupnju Rakia Coina
-total_monero_purchased = 0.0    # Ako se želi pratiti statistika (ovdje se ne koristi u fiksnom modelu)
+# Globalne varijable vezane uz kupnju (statistika – u ovom modelu se ne koristi za peg)
+total_monero_purchased = 0.0
 
 # Definiramo glavni wallet (gdje se skuplja fee) – stvarna adresa
 MAIN_WALLET_ADDRESS = "2Ub5eqoKGRjmEGov9dzqNsX4LA7Erd3joSBB"
-# Glavna Monero adresa – za informativne svrhe (transakcije kupnje/prodaje Rakia Coina)
+# Glavna Monero adresa – informativno, za transakcije kupnje/prodaje Rakia Coina
 MAIN_MONERO_ADDRESS = "4AF4YJufiiy2CAekHuunVmc12yR2wNQjHdKse7HwqSWGTdZsrDAwGvv55Fmht6VfsEXFw3RxR95yhXV9Rk5mR1JK67FkhVd"
 
 app = Flask(__name__)
@@ -316,7 +314,6 @@ def resource_value():
     Izračun:
       - Potencijalni prinos Monera u 1 satu rudarenja = (cpu * MONERO_PER_CPU_PER_HOUR) + (ram * MONERO_PER_RAM_PER_HOUR)
       - Vrijednost resursa u Rakia Coin = potencijalni prinos * DISCOUNT_FACTOR
-        (odnosno, 40% manje od potencijalnog prinosa)
     """
     try:
         cpu = float(request.json.get("cpu", 0))
@@ -325,7 +322,6 @@ def resource_value():
         return jsonify({"error": "Neispravne vrijednosti za CPU ili RAM"}), 400
     potential_monero = cpu * MONERO_PER_CPU_PER_HOUR + ram * MONERO_PER_RAM_PER_HOUR
     resource_value_rakia = potential_monero * DISCOUNT_FACTOR
-    # Osiguravamo da vrijednost Rakia Coina ne prelazi potencijalni prinos (mada DISCOUNT_FACTOR < 1)
     resource_value_rakia = min(resource_value_rakia, potential_monero)
     return jsonify({
         "cpu": cpu,
@@ -333,6 +329,55 @@ def resource_value():
         "potential_monero": potential_monero,
         "resource_value_rakia": resource_value_rakia,
         "discount_factor": DISCOUNT_FACTOR
+    }), 200
+
+@app.route('/resource_usage', methods=['POST'])
+def resource_usage():
+    """
+    Endpoint za naplatu korištenja CPU i RAM resursa tijekom određenog vremena unutar jednog sata.
+    Ulazni parametri (JSON):
+      - buyer: adresa kupca (wallet)
+      - cpu: broj CPU jedinica kupljenih od strane klijenta
+      - ram: količina RAM-a (u MB) kupljena od strane klijenta
+      - duration: trajanje korištenja (u minutama, maksimalno 60)
+    Izračun:
+      - Ukupni trošak = (cpu + ram) * 2 * (duration / 60)
+      - Trošak se jednako dijeli među svim aktivnim rudarima
+    Rezultat:
+      - Informacije o skinutom iznosu s kupčevog walleta te raspodjeli među rudarima.
+    """
+    data = request.json
+    buyer = data.get("buyer")
+    try:
+        cpu = float(data.get("cpu", 0))
+        ram = float(data.get("ram", 0))
+        duration = float(data.get("duration", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Neispravne vrijednosti za CPU, RAM ili trajanje"}), 400
+    if not buyer or cpu <= 0 or ram <= 0 or duration <= 0:
+        return jsonify({"error": "Kupac, CPU, RAM i trajanje moraju biti zadani i veći od 0"}), 400
+    if duration > 60:
+        duration = 60
+    total_cost = (cpu + ram) * 2 * (duration / 60)
+    num_miners = len(REGISTERED_MINERS)
+    if num_miners == 0:
+        return jsonify({"error": "Nema aktivnih minera"}), 400
+    miner_share = total_cost / num_miners
+    wallets = load_wallets()
+    buyer_balance = wallets.get(buyer, 0)
+    if buyer_balance < total_cost:
+        return jsonify({"error": "Nedovoljno sredstava u kupčevom walletu"}), 400
+    wallets[buyer] = buyer_balance - total_cost
+    for miner_id in REGISTERED_MINERS.keys():
+        wallets[miner_id] = wallets.get(miner_id, 0) + miner_share
+    save_wallets(wallets)
+    logging.info(f"💰 Resource Usage: Kupac {buyer} je koristio {cpu} CPU i {ram} MB RAM-a na {duration} minuta, ukupni trošak {total_cost} coina je podijeljen među {num_miners} rudar(a) ({miner_share} po rudaru).")
+    return jsonify({
+        "message": "Resource usage obračunat",
+        "buyer": buyer,
+        "total_cost": total_cost,
+        "num_miners": num_miners,
+        "miner_share": miner_share
     }), 200
 
 @app.route('/chain', methods=['GET'])

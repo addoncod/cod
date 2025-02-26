@@ -1,7 +1,7 @@
 import time
 import json
 import logging
-from flask import jsonify
+from flask import Flask, request, jsonify
 
 # Konfiguracija logiranja
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -103,13 +103,10 @@ def assign_resources_to_user(buyer, cpu, ram):
     if not REGISTERED_MINERS:
         return jsonify({"error": "❌ Nema aktivnih minera"}), 400
 
-    # Evidencija doprinosa svakog minera
     miner_contributions = {}
-
     remaining_cpu = cpu
     remaining_ram = ram
 
-    # Kopiranje dostupnih resursa minerima
     miners = []
     for miner_id, resources in REGISTERED_MINERS.items():
         miners.append({
@@ -123,7 +120,6 @@ def assign_resources_to_user(buyer, cpu, ram):
     ideal_cpu = remaining_cpu / num_miners
     ideal_ram = remaining_ram / num_miners
 
-    # Prva raspodjela - pokušaj ravnomjerne raspodjele
     for miner in miners:
         allocated_cpu = min(ideal_cpu, miner["cpu"])
         allocated_ram = min(ideal_ram, miner["ram"])
@@ -132,13 +128,11 @@ def assign_resources_to_user(buyer, cpu, ram):
         remaining_cpu -= allocated_cpu
         remaining_ram -= allocated_ram
 
-        # Ažuriranje dostupnih resursa u globalnoj evidenciji i lokalnoj kopiji
         REGISTERED_MINERS[miner["miner_id"]]["cpu"] -= allocated_cpu
         REGISTERED_MINERS[miner["miner_id"]]["ram"] -= allocated_ram
         miner["cpu"] -= allocated_cpu
         miner["ram"] -= allocated_ram
 
-    # Dodatna raspodjela - redistribucija preostalih resursa
     while (remaining_cpu > 0 or remaining_ram > 0) and any(m["cpu"] > 0 or m["ram"] > 0 for m in miners):
         available_miners = [m for m in miners if m["cpu"] > 0 or m["ram"] > 0]
         n_avail = len(available_miners)
@@ -158,15 +152,12 @@ def assign_resources_to_user(buyer, cpu, ram):
             miner["cpu"] -= additional_cpu
             miner["ram"] -= additional_ram
 
-        # Ako nijedan miner više nema dostupnih resursa, izlazimo iz petlje
         if not any(m["cpu"] > 0 or m["ram"] > 0 for m in available_miners):
             break
 
-    # Provjera je li raspodjela uspješna
     if remaining_cpu > 0 or remaining_ram > 0:
         return jsonify({"error": "❌ Nedovoljno resursa kod aktivnih minera za isporuku traženih resursa."}), 400
 
-    # Dodjela ukupnih resursa korisniku
     if buyer not in USER_RESOURCES:
         USER_RESOURCES[buyer] = {"cpu": 0, "ram": 0}
     USER_RESOURCES[buyer]["cpu"] += cpu
@@ -187,7 +178,7 @@ def register_miner(miner_id, cpu_available, ram_available):
 
     REGISTERED_MINERS[miner_id] = {"cpu": cpu_available, "ram": ram_available}
     wallets = load_wallets()
-    wallets.setdefault(miner_id, 0)  # Ako miner nema wallet, postavi ga na 0
+    wallets.setdefault(miner_id, 0)
     save_wallets(wallets)
 
     logging.info(f"⛏️  Rudar {miner_id} registriran sa {cpu_available} CPU i {ram_available} MB RAM-a.")
@@ -210,3 +201,83 @@ def save_wallets(wallets):
         logging.info("✅ Walletovi uspješno spremljeni.")
     except Exception as e:
         logging.error(f"❌ Greška pri spremanju walletova: {e}")
+
+# --- Novi dio: Endpoint za resource_usage ---
+
+MAIN_WALLET = "MAIN_WALLET"  # Adresa glavnog walleta za fee
+
+app = Flask(__name__)
+
+@app.route("/resource_usage", methods=["POST"])
+def resource_usage():
+    data = request.get_json()
+    buyer = data.get("buyer")
+    cpu = data.get("cpu")
+    ram = data.get("ram")
+    duration = data.get("duration")
+
+    if not buyer or cpu is None or ram is None or duration is None:
+        return jsonify({"error": "❌ Nedostaju parametri"}), 400
+
+    # Osiguraj minimalno trajanje od 60 minuta
+    if duration < 60:
+        duration = 60
+
+    # Izračun teoretskog dobitka rudarenja:
+    # Pretpostavimo: teoretski_dobitak = cpu + (ram / 1024)
+    theoretical_yield = cpu + (ram / 1024.0)
+    effective_yield = theoretical_yield * 0.6  # 40% se oduzima
+
+    # Rate rudarenja po minuti:
+    per_minute_rate = effective_yield / 60.0
+
+    # Ukupni trošak za trajanje korištenja:
+    total_cost = per_minute_rate * duration
+
+    wallets = load_wallets()
+    buyer_balance = wallets.get(buyer, 0)
+    if buyer_balance < total_cost:
+        return jsonify({"error": "❌ Nedovoljno coina na walletu"}), 400
+
+    # Skinemo ukupni trošak s buyerovog walleta
+    wallets[buyer] -= total_cost
+
+    # 10% fee ide u glavni wallet, ostatak (90%) ide rudarskoj nagradnoj kasi
+    fee = total_cost * 0.1
+    miner_pool = total_cost * 0.9
+
+    wallets[MAIN_WALLET] = wallets.get(MAIN_WALLET, 0) + fee
+
+    # Distribucija nagrada rudara svakih 30 minuta
+    intervals = int(duration / 30)  # npr. za 60 minuta ima 2 intervala
+    reward_per_interval = miner_pool / intervals if intervals > 0 else miner_pool
+
+    # Izračunamo ukupnu težinu rudara (na temelju CPU i RAM, pretvarajući RAM u jedinice)
+    total_weight = 0
+    for miner_id, resources in REGISTERED_MINERS.items():
+        total_weight += resources["cpu"] + (resources["ram"] / 1024.0)
+
+    miner_rewards = {}
+    if total_weight > 0:
+        for miner_id, resources in REGISTERED_MINERS.items():
+            weight = resources["cpu"] + (resources["ram"] / 1024.0)
+            # Ukupna nagrada za ovog minera preko svih intervala:
+            reward = reward_per_interval * intervals * (weight / total_weight)
+            wallets[miner_id] = wallets.get(miner_id, 0) + reward
+            miner_rewards[miner_id] = reward
+
+    save_wallets(wallets)
+
+    result = {
+        "message": "✅ Resource usage processed successfully",
+        "total_cost": total_cost,
+        "fee": fee,
+        "miner_pool": miner_pool,
+        "miner_rewards": miner_rewards,
+        "duration": duration,
+        "per_minute_rate": per_minute_rate
+    }
+    return jsonify(result), 200
+
+if __name__ == "__main__":
+    app.run(port=5000)

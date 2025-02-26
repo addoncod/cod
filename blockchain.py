@@ -37,7 +37,7 @@ app = Flask(__name__)
 socketio = SocketIO(app)
 
 class Block:
-    def __init__(self, index, previous_hash, timestamp, transactions, resource_tasks, miner, nonce):
+    def __init__(self, index, previous_hash, timestamp, transactions, resource_tasks, miner, nonce, reward=0):
         self.index = index
         self.previous_hash = previous_hash
         self.timestamp = timestamp
@@ -45,6 +45,7 @@ class Block:
         self.resource_tasks = resource_tasks
         self.miner = miner
         self.nonce = nonce
+        self.reward = reward  # Dodali smo reward kao opcionalni parametar
         self.hash = self.calculate_hash()
 
     def calculate_hash(self):
@@ -55,7 +56,8 @@ class Block:
             "transactions": self.transactions,
             "resource_tasks": self.resource_tasks,
             "miner": self.miner,
-            "nonce": self.nonce
+            "nonce": self.nonce,
+            "reward": self.reward
         }
         data_str = json.dumps(data, sort_keys=True).encode()
         return hashlib.sha256(data_str).hexdigest()
@@ -69,11 +71,24 @@ class Blockchain:
         if not self.chain:
             self.create_genesis_block()
         else:
-            # Provjera da li su svi blokovi validni
-            self.chain = [Block(**block) if isinstance(block, dict) else block for block in self.chain]
+            # Ispravno učitavanje blockchain podataka
+            self.chain = [
+                Block(
+                    index=block["index"],
+                    previous_hash=block["previous_hash"],
+                    timestamp=block["timestamp"],
+                    transactions=block.get("transactions", []),
+                    resource_tasks=block.get("resource_tasks", []),
+                    miner=block["miner"],
+                    nonce=block["nonce"],
+                    reward=block.get("reward", 0)  # Ako reward postoji, koristimo ga, inače 0
+                )
+                if isinstance(block, dict) else block
+                for block in self.chain
+            ]
 
     def create_genesis_block(self):
-        genesis_block = Block(0, "0", int(time.time()), [], [], "GENESIS", 0)
+        genesis_block = Block(0, "0", int(time.time()), [], [], "GENESIS", 0, reward=0)
         self.chain.append(genesis_block)
         save_blockchain(self.chain)
         logging.info("✅ Genesis blok kreiran.")
@@ -139,7 +154,8 @@ def submit_block():
         block_data.get("transactions", []),
         block_data.get("resource_tasks", []),
         block_data["miner"],
-        block_data["nonce"]
+        block_data["nonce"],
+        block_data.get("reward", 0)  # Osiguravamo da koristimo reward ako postoji
     )
 
     if new_block.calculate_hash() != block_data["hash"]:

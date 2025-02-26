@@ -13,11 +13,11 @@ from functions import (
     get_resource_requests, 
     save_blockchain, 
     load_blockchain,
-    load_wallets,           # Dodano
-    save_wallets,           # Dodano
+    load_wallets,
+    save_wallets,
     assign_resources_to_user,
     register_miner,
-    REGISTERED_MINERS       # Dodan uvoz REGISTERED_MINERS
+    REGISTERED_MINERS
 )
 
 # Konfiguracija logiranja
@@ -26,6 +26,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 # Parametri blockchaina
 DIFFICULTY = 4
 RESOURCE_REWARD = 5
+
+# Definiramo glavni wallet (Main Wallet Address)
+MAIN_WALLET_ADDRESS = "2Ub5eqoKGRjmEGov9dzqNsX4LA7Erd3joSBB"
 
 app = Flask(__name__)
 socketio = SocketIO(app)
@@ -222,7 +225,7 @@ def api_submit_block():
 
     # NOVA LOGIKA: Proces nagrade
     # Ako blok sadrži resource task, kupac plaća iz svog walleta tražene resurse,
-    # od čega 10% ide u MAIN_WALLET, a preostalih 90% rudaru.
+    # od čega 10% ide u MAIN_WALLET (koji je sada stvarna adresa), a preostalih 90% rudaru.
     if new_block.resource_tasks:
         task = new_block.resource_tasks[0]
         buyer = task.get("buyer")
@@ -235,9 +238,9 @@ def api_submit_block():
         if wallets.get(buyer, 0) >= total_price:
             wallets[buyer] -= total_price
             wallets[new_block.miner] = wallets.get(new_block.miner, 0) + miner_reward
-            wallets["MAIN_WALLET"] = wallets.get("MAIN_WALLET", 0) + fee
+            wallets[MAIN_WALLET_ADDRESS] = wallets.get(MAIN_WALLET_ADDRESS, 0) + fee
             save_wallets(wallets)
-            logging.info(f"💰 Transakcija: Od kupca {buyer} skinuto {total_price} coina, miner {new_block.miner} dobio {miner_reward} coina, glavni wallet dobio {fee} coina.")
+            logging.info(f"💰 Transakcija: Od kupca {buyer} skinuto {total_price} coina, miner {new_block.miner} dobio {miner_reward} coina, glavni wallet ({MAIN_WALLET_ADDRESS}) dobio {fee} coina.")
         else:
             logging.error(f"❌ Kupac {buyer} nema dovoljno coina za plaćanje nagrade.")
 

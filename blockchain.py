@@ -15,8 +15,9 @@ from functions import (
     load_blockchain,
     assign_resources_to_user,
     register_miner,
-    REGISTERED_MINERS  # Dodan uvoz REGISTERED_MINERS
+    REGISTERED_MINERS
 )
+
 # Konfiguracija logiranja
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -177,14 +178,14 @@ def api_submit_block():
     block_data = request.json
     required_fields = ["index", "previous_hash", "timestamp", "resource_tasks", "nonce", "hash", "miner"]
 
-    # ✅ Provjeri da li su sva potrebna polja prisutna
+    # Provjera da li su sva potrebna polja prisutna
     missing_fields = [field for field in required_fields if field not in block_data]
     if missing_fields:
         logging.error(f"❌ Nedostaju polja u bloku: {missing_fields}")
         return jsonify({"error": "Neispravni podaci bloka", "missing_fields": missing_fields}), 400
 
     try:
-        # ✅ Pokušaj kreirati novi blok
+        # Pokušaj kreirati novi blok
         new_block = Block(
             index=block_data["index"],
             previous_hash=block_data["previous_hash"],
@@ -196,7 +197,7 @@ def api_submit_block():
             nonce=block_data["nonce"]
         )
 
-        # ✅ Provjera da li je hash ispravan
+        # Provjera da li je hash ispravan
         calculated_hash = new_block.calculate_hash()
         if calculated_hash != block_data["hash"]:
             logging.error(f"❌ Neispravan hash: Očekivan {calculated_hash}, primljen {block_data['hash']}")
@@ -206,20 +207,39 @@ def api_submit_block():
         logging.error(f"❌ Greška pri kreiranju bloka: {e}")
         return jsonify({"error": f"Greška pri kreiranju bloka: {e}"}), 400
 
-    # ✅ Validacija bloka
+    # Validacija bloka
     last_block = blockchain.chain[-1]
     if not blockchain.validate_block(new_block, last_block):
         logging.error("❌ Validacija novog bloka nije uspjela.")
         return jsonify({"error": "Validacija bloka nije uspjela"}), 400
 
-    # ✅ Dodaj blok u lanac ako je sve ispravno
+    # Dodavanje bloka u lanac
     blockchain.chain.append(new_block)
     save_blockchain([block.to_dict() for block in blockchain.chain])
     logging.info(f"✅ Blok {new_block.index} primljen i dodan u lanac.")
 
+    # NOVA LOGIKA: Proces nagrade
+    # Ako blok sadrži resource task, kupac plaća iz svog walleta tražene resurse,
+    # od čega 10% ide u MAIN_WALLET, a preostalih 90% rudaru.
+    if new_block.resource_tasks:
+        task = new_block.resource_tasks[0]
+        buyer = task.get("buyer")
+        cpu_req = task.get("cpu")
+        ram_req = task.get("ram")
+        total_price = (cpu_req + ram_req) * 2
+        fee = total_price * 0.1
+        miner_reward = total_price - fee
+        wallets = load_wallets()
+        if wallets.get(buyer, 0) >= total_price:
+            wallets[buyer] -= total_price
+            wallets[new_block.miner] = wallets.get(new_block.miner, 0) + miner_reward
+            wallets["MAIN_WALLET"] = wallets.get("MAIN_WALLET", 0) + fee
+            save_wallets(wallets)
+            logging.info(f"💰 Transakcija: Od kupca {buyer} skinuto {total_price} coina, miner {new_block.miner} dobio {miner_reward} coina, glavni wallet dobio {fee} coina.")
+        else:
+            logging.error(f"❌ Kupac {buyer} nema dovoljno coina za plaćanje nagrade.")
+
     return jsonify({"message": "✅ Blok primljen", "block": new_block.to_dict()}), 200
-
-
 
 @app.route('/chain', methods=['GET'])
 def get_chain():

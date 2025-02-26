@@ -144,6 +144,65 @@ class Blockchain:
 
 blockchain = Blockchain()
 
+# NOVO: Gradualna 24-satna sesija naplate resursa (24 sata = 1440 minuta)
+def resource_usage_session_thread(buyer, cpu, ram, total_minutes=1440):
+    """
+    Za 2 CPU i 2GB RAM (2048 MB), ukupni trošak u 24 sata je 0.00009 XMR.
+    Trošak se skalira prema unesenim vrijednostima:
+      total_cost = 0.00009 * (cpu/2) * (ram/2048)
+    Svake minute se oduzima minute_cost, pri čemu:
+      - 10% ide u MAIN_WALLET
+      - 90% se raspodjeljuje jednoliko među svim aktivnim rudarima.
+    """
+    total_cost = 0.00009 * (cpu / 2) * (ram / 2048.0)
+    minute_cost = total_cost / total_minutes
+    fee_rate = 0.1
+    fee_per_minute = minute_cost * fee_rate
+    miner_reward_per_minute = minute_cost - fee_per_minute
+
+    logging.info(f"Resource usage session pokrenut za {buyer}: minute_cost = {minute_cost:.2e} XMR")
+    for i in range(total_minutes):
+        wallets = load_wallets()
+        buyer_balance = wallets.get(buyer, 0)
+        if buyer_balance >= minute_cost:
+            wallets[buyer] = buyer_balance - minute_cost
+            wallets[MAIN_WALLET] = wallets.get(MAIN_WALLET, 0) + fee_per_minute
+            num_miners = len(REGISTERED_MINERS)
+            if num_miners > 0:
+                reward_each = miner_reward_per_minute / num_miners
+                for miner_id in REGISTERED_MINERS.keys():
+                    wallets[miner_id] = wallets.get(miner_id, 0) + reward_each
+            save_wallets(wallets)
+            logging.info(f"Minute {i+1}/{total_minutes}: {buyer} - oduzeto {minute_cost:.2e} XMR")
+        else:
+            logging.error(f"Minute {i+1}/{total_minutes}: Nedovoljno sredstava za {buyer} (balans: {buyer_balance:.2e} XMR)")
+        time.sleep(60)
+    logging.info(f"Resource usage session za {buyer} završena.")
+
+@app.route("/resource_usage_session", methods=["POST"])
+def resource_usage_session():
+    """
+    Endpoint za pokretanje 24-satne sesije naplate korištenja resursa.
+    Trošak se raspoređuje jednoliko po minutama (1440 minuta).
+    Svake minute:
+      - s kupčevog walleta se oduzima minute_cost,
+      - 10% ide u MAIN_WALLET,
+      - 90% se jednoliko dijeli među aktivnim rudarima.
+    """
+    data = request.get_json()
+    buyer = data.get("buyer")
+    try:
+        cpu = float(data.get("cpu", 0))
+        ram = float(data.get("ram", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Neispravne vrijednosti za CPU ili RAM"}), 400
+    if not buyer or cpu <= 0 or ram <= 0:
+        return jsonify({"error": "Buyer, CPU i RAM moraju biti zadani i veći od 0"}), 400
+
+    thread = threading.Thread(target=resource_usage_session_thread, args=(buyer, cpu, ram))
+    thread.start()
+    return jsonify({"message": "Resource usage session za 24 sata je pokrenuta."}), 200
+
 # API endpointi
 
 @app.route('/add_balance', methods=['POST'])
@@ -238,7 +297,6 @@ def api_submit_block():
     blockchain.chain.append(new_block)
     save_blockchain([block.to_dict() for block in blockchain.chain])
     logging.info(f"✅ Blok {new_block.index} primljen i dodan u lanac.")
-    # Ako blok sadrži resource_tasks, bilježimo share rudara
     if new_block.resource_tasks:
         miner_id = new_block.miner
         MINER_SHARES[miner_id] = MINER_SHARES.get(miner_id, 0) + 1
@@ -281,7 +339,7 @@ def buy_rakia():
         "transaction_executed": transaction_executed
     }), 200
 
-@app.route('/resource_value', methods=['POST'])
+@app.route('/resource_value', methods=["POST"])
 def resource_value():
     """
     Izračun vrijednosti resursa u Rakia Coin.
@@ -306,7 +364,7 @@ def resource_value():
         "discount_factor": DISCOUNT_FACTOR
     }), 200
 
-@app.route('/resource_usage', methods=['POST'])
+@app.route('/resource_usage', methods=["POST"])
 def resource_usage():
     """
     Endpoint za naplatu korištenja resursa tijekom 1 sata.
@@ -320,13 +378,12 @@ def resource_usage():
     try:
         cpu = float(data.get("cpu", 0))
         ram = float(data.get("ram", 0))
-        # Fiksiramo trajanje na 60 minuta (1 sat)
-        duration = 60
+        duration = 60  # Fiksirano na 60 minuta
     except (TypeError, ValueError):
         return jsonify({"error": "Neispravne vrijednosti za CPU, RAM ili trajanje"}), 400
     if not buyer or cpu <= 0 or ram <= 0:
         return jsonify({"error": "Kupac, CPU i RAM moraju biti zadani i veći od 0"}), 400
-    total_cost = (cpu + ram) * 2  # Primjer formule za trošak
+    total_cost = (cpu + ram) * 2
     wallets = load_wallets()
     buyer_balance = wallets.get(buyer, 0)
     if buyer_balance < total_cost:
@@ -345,7 +402,6 @@ def resource_usage():
         miner_rewards[miner_id] = reward
     save_wallets(wallets)
     logging.info(f"💰 Resource usage: Kupac {buyer} plati {total_cost} coina, fee {fee} coina, raspodijeljeno po shareovima: {miner_rewards}")
-    # Resetiramo shareove nakon raspodjele
     MINER_SHARES.clear()
     return jsonify({
         "message": "Resource usage obračunat",
@@ -356,7 +412,7 @@ def resource_usage():
         "total_shares": total_shares
     }), 200
 
-@app.route('/chain', methods=['GET'])
+@app.route('/chain', methods=["GET"])
 def get_chain():
     return jsonify([block.to_dict() for block in blockchain.chain]), 200
 

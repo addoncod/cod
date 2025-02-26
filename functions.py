@@ -6,17 +6,28 @@ from flask import Flask, request, jsonify
 # Konfiguracija logiranja
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
+# Datoteke za pohranu podataka
 BLOCKCHAIN_FILE = "blockchain_data.json"
 WALLETS_FILE = "wallets.json"
 
-# Globalni rječnik za korisničke resurse
-USER_RESOURCES = {}
+# Globalni rječnici i liste
+USER_RESOURCES = {}         # Resursi korisnika (npr. CPU, RAM)
+RESOURCE_REQUESTS = []      # Lista zahtjeva za resurse
+REGISTERED_MINERS = {}      # Evidencija aktivnih minera
 
-# Globalna lista za zahtjeve resursa
-RESOURCE_REQUESTS = []
+# Parametri za izračun vrijednosti resursa (u smislu izrudarenih Monera)
+# Cilj: 2 CPU i 2GB RAM (2048 MB) daje potencijalni prinos ≈ 0.00001 XMR u 24 sata,
+# tj. oko 4.17e-7 XMR po satu, prije primjene diskonta.
+MONERO_PER_CPU_PER_HOUR = 1.0e-7       # XMR po CPU jedinici u satu
+MONERO_PER_RAM_PER_HOUR = 1.058e-10     # XMR po MB RAM-a u satu
+DISCOUNT_FACTOR = 0.6                  # Kupac dobiva 60% potencijalnog prinosa
 
-# Globalna lista rudara
-REGISTERED_MINERS = {}
+# Glavni wallet (gdje se skuplja fee)
+MAIN_WALLET = "MAIN_WALLET"
+
+app = Flask(__name__)
+
+# --- Funkcije za rad s blockchainom i walletovima ---
 
 def save_blockchain(blockchain):
     try:
@@ -202,82 +213,96 @@ def save_wallets(wallets):
     except Exception as e:
         logging.error(f"❌ Greška pri spremanju walletova: {e}")
 
-# --- Novi dio: Endpoint za resource_usage ---
-
-MAIN_WALLET = "MAIN_WALLET"  # Adresa glavnog walleta za fee
-
-app = Flask(__name__)
+# --- Novi endpointi: resource_usage i resource_value ---
 
 @app.route("/resource_usage", methods=["POST"])
 def resource_usage():
+    """
+    Endpoint za naplatu korištenja CPU i RAM resursa tijekom određenog vremena.
+    Klijent plaća ukupni trošak, a nakon oduzimanja 10% fee (koji ide u glavni wallet),
+    preostalih 90% se distribuira među rudarima.
+    """
     data = request.get_json()
     buyer = data.get("buyer")
-    cpu = data.get("cpu")
-    ram = data.get("ram")
-    duration = data.get("duration")
+    try:
+        cpu = float(data.get("cpu", 0))
+        ram = float(data.get("ram", 0))
+        duration = float(data.get("duration", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Neispravne vrijednosti za CPU, RAM ili trajanje"}), 400
 
-    if not buyer or cpu is None or ram is None or duration is None:
-        return jsonify({"error": "❌ Nedostaju parametri"}), 400
+    if not buyer or cpu <= 0 or ram <= 0 or duration <= 0:
+        return jsonify({"error": "Kupac, CPU, RAM i trajanje moraju biti zadani i veći od 0"}), 400
 
-    # Osiguraj minimalno trajanje od 60 minuta
+    # Osiguraj minimalno trajanje od 60 minuta (1 sat)
     if duration < 60:
         duration = 60
+    elif duration > 60:
+        duration = 60  # Fiksiramo na 60 minuta za ovaj model
 
-    # Izračun teoretskog dobitka rudarenja:
-    # Pretpostavimo: teoretski_dobitak = cpu + (ram / 1024)
-    theoretical_yield = cpu + (ram / 1024.0)
-    effective_yield = theoretical_yield * 0.6  # 40% se oduzima
-
-    # Rate rudarenja po minuti:
-    per_minute_rate = effective_yield / 60.0
-
-    # Ukupni trošak za trajanje korištenja:
-    total_cost = per_minute_rate * duration
+    # Izračun troška: primjer formule – (cpu + ram) * 2 (vrijednost se može prilagoditi)
+    total_cost = (cpu + ram) * 2
 
     wallets = load_wallets()
     buyer_balance = wallets.get(buyer, 0)
     if buyer_balance < total_cost:
-        return jsonify({"error": "❌ Nedovoljno coina na walletu"}), 400
+        return jsonify({"error": "Nedovoljno sredstava u kupčevom walletu"}), 400
 
-    # Skinemo ukupni trošak s buyerovog walleta
-    wallets[buyer] -= total_cost
+    # Skinemo ukupni trošak s kupčevog walleta
+    wallets[buyer] = buyer_balance - total_cost
 
-    # 10% fee ide u glavni wallet, ostatak (90%) ide rudarskoj nagradnoj kasi
+    # Računamo fee (10%) i miner pool (90%)
     fee = total_cost * 0.1
-    miner_pool = total_cost * 0.9
-
+    miner_pool = total_cost - fee
     wallets[MAIN_WALLET] = wallets.get(MAIN_WALLET, 0) + fee
 
-    # Distribucija nagrada rudara svakih 30 minuta
-    intervals = int(duration / 30)  # npr. za 60 minuta ima 2 intervala
-    reward_per_interval = miner_pool / intervals if intervals > 0 else miner_pool
+    # Distribucija miner nagrada – ovdje se koristi jednostavna raspodjela (možete zamijeniti s share sistemom)
+    num_miners = len(REGISTERED_MINERS)
+    if num_miners == 0:
+        return jsonify({"error": "Nema aktivnih minera"}), 400
 
-    # Izračunamo ukupnu težinu rudara (na temelju CPU i RAM, pretvarajući RAM u jedinice)
-    total_weight = 0
-    for miner_id, resources in REGISTERED_MINERS.items():
-        total_weight += resources["cpu"] + (resources["ram"] / 1024.0)
-
+    miner_share = miner_pool / num_miners
     miner_rewards = {}
-    if total_weight > 0:
-        for miner_id, resources in REGISTERED_MINERS.items():
-            weight = resources["cpu"] + (resources["ram"] / 1024.0)
-            # Ukupna nagrada za ovog minera preko svih intervala:
-            reward = reward_per_interval * intervals * (weight / total_weight)
-            wallets[miner_id] = wallets.get(miner_id, 0) + reward
-            miner_rewards[miner_id] = reward
+    for miner_id in REGISTERED_MINERS.keys():
+        wallets[miner_id] = wallets.get(miner_id, 0) + miner_share
+        miner_rewards[miner_id] = miner_share
 
     save_wallets(wallets)
+    logging.info(f"💰 Resource usage: Kupac {buyer} plati {total_cost} coina, fee {fee} coina, "
+                 f"raspodijeljeno među {num_miners} rudar(a) ({miner_share} po rudaru).")
 
-    result = {
-        "message": "✅ Resource usage processed successfully",
+    return jsonify({
+        "message": "Resource usage obračunat",
+        "buyer": buyer,
         "total_cost": total_cost,
         "fee": fee,
-        "miner_pool": miner_pool,
-        "miner_rewards": miner_rewards,
-        "duration": duration,
-        "per_minute_rate": per_minute_rate
-    }
-    return jsonify(result), 200
+        "miner_rewards": miner_rewards
+    }), 200
+
+@app.route("/resource_value", methods=["POST"])
+def resource_value():
+    """
+    Endpoint za izračun vrijednosti CPU i RAM resursa u Rakia Coin.
+    Izračun:
+      - Potencijalni prinos u 1 satu rudarenja = (cpu * MONERO_PER_CPU_PER_HOUR) + (ram * MONERO_PER_RAM_PER_HOUR)
+      - Vrijednost za kupca = potencijalni prinos * DISCOUNT_FACTOR
+    """
+    try:
+        cpu = float(request.json.get("cpu", 0))
+        ram = float(request.json.get("ram", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Neispravne vrijednosti za CPU ili RAM"}), 400
+
+    potential_monero = cpu * MONERO_PER_CPU_PER_HOUR + ram * MONERO_PER_RAM_PER_HOUR
+    resource_value_rakia = potential_monero * DISCOUNT_FACTOR
+    resource_value_rakia = min(resource_value_rakia, potential_monero)
+    return jsonify({
+        "cpu": cpu,
+        "ram": ram,
+        "potential_monero": potential_monero,
+        "resource_value_rakia": resource_value_rakia,
+        "discount_factor": DISCOUNT_FACTOR
+    }), 200
 
 if __name__ == "__main__":
     app.run(port=5000)

@@ -411,6 +411,29 @@ def resource_usage():
         "miner_rewards": miner_rewards,
         "total_shares": total_shares
     }), 200
+@app.route("/resource_usage_session", methods=["POST"])
+def resource_usage_session():
+    data = request.get_json()
+    buyer = data.get("buyer")
+    try:
+        cpu = float(data.get("cpu", 0))
+        ram = float(data.get("ram", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Neispravne vrijednosti za CPU ili RAM"}), 400
+    if not buyer or cpu <= 0 or ram <= 0:
+        return jsonify({"error": "Buyer, CPU i RAM moraju biti zadani i veći od 0"}), 400
+
+    # Dodajemo "dummy" zahtjev u RESOURCE_REQUESTS kako bi ga miner mogao dohvatiti
+    RESOURCE_REQUESTS.append({
+        "buyer": buyer,
+        "cpu": cpu,
+        "ram": ram,
+        "timestamp": int(time.time())
+    })
+    # Pokrećemo sesiju u zasebnoj niti
+    thread = threading.Thread(target=resource_usage_session_thread, args=(buyer, cpu, ram))
+    thread.start()
+    return jsonify({"message": "Resource usage session za 24 sata je pokrenuta."}), 200
 
 @app.route('/chain', methods=["GET"])
 def get_chain():

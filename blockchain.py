@@ -13,9 +13,11 @@ from functions import (
     get_resource_requests, 
     save_blockchain, 
     load_blockchain,
+    load_wallets,           # Dodano
+    save_wallets,           # Dodano
     assign_resources_to_user,
     register_miner,
-    REGISTERED_MINERS
+    REGISTERED_MINERS       # Dodan uvoz REGISTERED_MINERS
 )
 
 # Konfiguracija logiranja

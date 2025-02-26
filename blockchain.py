@@ -26,19 +26,17 @@ from functions import (
 # Konfiguracija logiranja
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-# Parametri blockchaina
+# Blockchain parametri
 DIFFICULTY = 4
 FEE_PERCENTAGE = 0.1  # 10% naknade ide u glavni wallet
 
-# Parametri za izračun vrijednosti CPU i RAM resursa
+# Resursi CPU i RAM vrijednosti
 MONERO_PER_CPU_PER_HOUR = 1.0e-7
 MONERO_PER_RAM_PER_HOUR = 1.058e-10
 DISCOUNT_FACTOR = 0.6  # Kupac dobija 60% potencijalnog prinosa
 
-# Globalna varijabla za praćenje shareova rudara
+# Rudari i balansi
 MINER_SHARES = {}
-
-# Glavni wallet (za naknade)
 MAIN_WALLET_ADDRESS = "2Ub5eqoKGRjmEGov9dzqNsX4LA7Erd3joSBB"
 
 app = Flask(__name__)
@@ -90,7 +88,7 @@ class Blockchain:
         return True
 
     def add_block(self, transactions, resource_tasks, miner):
-        """Kreira i dodaje blok u blockchain."""
+        """Dodaje novi blok u blockchain."""
         new_block = self.mine_block(self.chain[-1], transactions, resource_tasks, miner)
         if self.validate_block(new_block, self.chain[-1]):
             self.chain.append(new_block)
@@ -117,6 +115,23 @@ class Blockchain:
             nonce += 1
 
 blockchain = Blockchain()
+
+@app.route("/register_miner", methods=["POST"])
+def api_register_miner():
+    """Registruje minera na sistem."""
+    data = request.json
+    miner_id = data.get("miner_id")
+    cpu_available = data.get("cpu_available")
+    ram_available = data.get("ram_available")
+
+    if not miner_id or cpu_available is None or ram_available is None:
+        return jsonify({"error": "Neispravni podaci za registraciju minera"}), 400
+
+    REGISTERED_MINERS[miner_id] = {"cpu": cpu_available, "ram": ram_available}
+    save_wallets(load_wallets())  # Osigurava da svi miner walleti postoje
+    logging.info(f"⛏️  Rudar {miner_id} registrovan sa {cpu_available} CPU i {ram_available} MB RAM-a.")
+
+    return jsonify({"message": "✅ Rudar uspješno registrovan", "miners": REGISTERED_MINERS}), 200
 
 @app.route("/mine", methods=["POST"])
 def submit_block():
@@ -153,7 +168,7 @@ def submit_block():
 
 @app.route("/resource_usage_session", methods=["POST"])
 def resource_usage_session():
-    """Endpoint za pokretanje naplate korištenja resursa po minuti."""
+    """Endpoint za naplatu resursa po minuti."""
     data = request.get_json()
     buyer = data.get("buyer")
     try:
@@ -169,32 +184,6 @@ def resource_usage_session():
     thread = threading.Thread(target=resource_usage_session_thread, args=(buyer, cpu, ram))
     thread.start()
     return jsonify({"message": "Naplata resursa pokrenuta."}), 200
-
-def resource_usage_session_thread(buyer, cpu, ram, total_minutes=1440):
-    """Obračun naplate resursa po minuti."""
-    total_cost = 0.00009 * (cpu / 2) * (ram / 2048.0)
-    minute_cost = total_cost / total_minutes
-    fee_per_minute = minute_cost * FEE_PERCENTAGE
-    miner_reward_per_minute = minute_cost - fee_per_minute
-
-    for i in range(total_minutes):
-        wallets = load_wallets()
-        if wallets.get(buyer, 0) < minute_cost:
-            logging.error(f"Nedovoljno sredstava za {buyer}. Naplata prekinuta.")
-            break
-
-        wallets[buyer] -= minute_cost
-        wallets[MAIN_WALLET_ADDRESS] += fee_per_minute
-
-        # Raspodela zarade samo aktivnim rudarima
-        active_miners = {m_id: MINER_SHARES[m_id] for m_id in MINER_SHARES if m_id in REGISTERED_MINERS}
-        if active_miners:
-            reward_each = miner_reward_per_minute / len(active_miners)
-            for miner_id in active_miners:
-                wallets[miner_id] += reward_each
-
-        save_wallets(wallets)
-        time.sleep(60)
 
 if __name__ == "__main__":
     socketio.run(app, host="0.0.0.0", port=5000)

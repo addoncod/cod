@@ -100,14 +100,86 @@ def assign_resources_to_user(buyer, cpu, ram):
     if not buyer or cpu is None or ram is None:
         return jsonify({"error": "❌ Neispravni parametri"}), 400
 
+    if not REGISTERED_MINERS:
+        return jsonify({"error": "❌ Nema aktivnih minera"}), 400
+
+    # Evidencija doprinosa svakog minera
+    miner_contributions = {}
+
+    remaining_cpu = cpu
+    remaining_ram = ram
+
+    # Kopiranje dostupnih resursa minerima
+    miners = []
+    for miner_id, resources in REGISTERED_MINERS.items():
+        miners.append({
+            "miner_id": miner_id,
+            "cpu": resources["cpu"],
+            "ram": resources["ram"]
+        })
+        miner_contributions[miner_id] = {"cpu": 0, "ram": 0}
+
+    num_miners = len(miners)
+    ideal_cpu = remaining_cpu / num_miners
+    ideal_ram = remaining_ram / num_miners
+
+    # Prva raspodjela - pokušaj ravnomjerne raspodjele
+    for miner in miners:
+        allocated_cpu = min(ideal_cpu, miner["cpu"])
+        allocated_ram = min(ideal_ram, miner["ram"])
+        miner_contributions[miner["miner_id"]]["cpu"] += allocated_cpu
+        miner_contributions[miner["miner_id"]]["ram"] += allocated_ram
+        remaining_cpu -= allocated_cpu
+        remaining_ram -= allocated_ram
+
+        # Ažuriranje dostupnih resursa u globalnoj evidenciji i lokalnoj kopiji
+        REGISTERED_MINERS[miner["miner_id"]]["cpu"] -= allocated_cpu
+        REGISTERED_MINERS[miner["miner_id"]]["ram"] -= allocated_ram
+        miner["cpu"] -= allocated_cpu
+        miner["ram"] -= allocated_ram
+
+    # Dodatna raspodjela - redistribucija preostalih resursa
+    while (remaining_cpu > 0 or remaining_ram > 0) and any(m["cpu"] > 0 or m["ram"] > 0 for m in miners):
+        available_miners = [m for m in miners if m["cpu"] > 0 or m["ram"] > 0]
+        n_avail = len(available_miners)
+        extra_cpu_share = remaining_cpu / n_avail if n_avail else 0
+        extra_ram_share = remaining_ram / n_avail if n_avail else 0
+
+        for miner in available_miners:
+            additional_cpu = min(extra_cpu_share, miner["cpu"])
+            additional_ram = min(extra_ram_share, miner["ram"])
+            miner_contributions[miner["miner_id"]]["cpu"] += additional_cpu
+            miner_contributions[miner["miner_id"]]["ram"] += additional_ram
+            remaining_cpu -= additional_cpu
+            remaining_ram -= additional_ram
+
+            REGISTERED_MINERS[miner["miner_id"]]["cpu"] -= additional_cpu
+            REGISTERED_MINERS[miner["miner_id"]]["ram"] -= additional_ram
+            miner["cpu"] -= additional_cpu
+            miner["ram"] -= additional_ram
+
+        # Ako nijedan miner više nema dostupnih resursa, izlazimo iz petlje
+        if not any(m["cpu"] > 0 or m["ram"] > 0 for m in available_miners):
+            break
+
+    # Provjera je li raspodjela uspješna
+    if remaining_cpu > 0 or remaining_ram > 0:
+        return jsonify({"error": "❌ Nedovoljno resursa kod aktivnih minera za isporuku traženih resursa."}), 400
+
+    # Dodjela ukupnih resursa korisniku
     if buyer not in USER_RESOURCES:
         USER_RESOURCES[buyer] = {"cpu": 0, "ram": 0}
-
     USER_RESOURCES[buyer]["cpu"] += cpu
     USER_RESOURCES[buyer]["ram"] += ram
 
-    logging.info(f"✅ Resursi dodijeljeni: {cpu} CPU i {ram} MB RAM-a kupcu {buyer}.")
-    return jsonify({"message": "✅ Resursi dodijeljeni", "resources": USER_RESOURCES[buyer]}), 200
+    logging.info(f"✅ Resursi dodijeljeni kupcu {buyer}: CPU {cpu}, RAM {ram} MB.")
+    logging.info(f"Distribucija po rudarima: {miner_contributions}")
+
+    return jsonify({
+        "message": "✅ Resursi dodijeljeni",
+        "user_resources": USER_RESOURCES[buyer],
+        "miner_contributions": miner_contributions
+    }), 200
 
 def register_miner(miner_id, cpu_available, ram_available):
     if not miner_id or cpu_available is None or ram_available is None:

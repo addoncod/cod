@@ -137,7 +137,11 @@ class Blockchain:
         prefix = "0" * DIFFICULTY
     
         global TRANSACTIONS  # Koristimo globalnu listu transakcija
-        transactions = TRANSACTIONS.copy()  # Kopiramo transakcije
+        transactions = TRANSACTIONS.copy()  # Kopiramo transakcije pre rudarenja
+    
+        if not transactions:  
+            logging.warning("⛔ Nema transakcija za dodavanje u blok.")
+        
         TRANSACTIONS.clear()  # Brišemo transakcije nakon rudarenja
     
         while True:
@@ -146,6 +150,7 @@ class Blockchain:
                 logging.info(f"⛏️  Blok {index} iskopan | Rudar: {miner} | Transakcije: {len(transactions)} | Hash: {new_block.hash}")
                 return new_block
             nonce += 1
+
 
 
 
@@ -273,6 +278,10 @@ def new_transaction():
 
     return jsonify({"message": "Transakcija zabilježena"}), 200
 
+@app.route('/transactions', methods=['GET'])
+def get_pending_transactions():
+    """Prikazuje transakcije koje čekaju rudarenje"""
+    return jsonify({"transactions": TRANSACTIONS}), 200
 
 @app.route('/register_miner', methods=["POST"])
 def api_register_miner():
@@ -310,40 +319,60 @@ def api_assign_resources():
 def api_submit_block():
     block_data = request.json
     required_fields = ["index", "previous_hash", "timestamp", "resource_tasks", "nonce", "hash", "miner"]
+
+    # Proveri da li nedostaju neka polja
     missing_fields = [field for field in required_fields if field not in block_data]
     if missing_fields:
         logging.error(f"❌ Nedostaju polja u bloku: {missing_fields}")
         return jsonify({"error": "Neispravni podaci bloka", "missing_fields": missing_fields}), 400
+
     try:
+        global TRANSACTIONS  # Koristimo globalnu listu transakcija
+        transactions = TRANSACTIONS.copy()  # Kopiramo transakcije za rudarenje
+        TRANSACTIONS.clear()  # Brišemo transakcije nakon rudarenja
+
+        # Kreiranje novog bloka sa transakcijama
         new_block = Block(
             index=block_data["index"],
             previous_hash=block_data["previous_hash"],
             timestamp=block_data["timestamp"],
-            transactions=block_data.get("transactions", []),
+            transactions=transactions,  # Dodajemo transakcije u blok!
             resource_tasks=block_data.get("resource_tasks", []),
             miner=block_data["miner"],
             reward=RESOURCE_REWARD,
             nonce=block_data["nonce"]
         )
+
+        # Provera da li je hash ispravan
         calculated_hash = new_block.calculate_hash()
         if calculated_hash != block_data["hash"]:
             logging.error(f"❌ Neispravan hash: Očekivan {calculated_hash}, primljen {block_data['hash']}")
             return jsonify({"error": "Neispravan hash", "expected": calculated_hash, "received": block_data["hash"]}), 400
+
     except Exception as e:
         logging.error(f"❌ Greška pri kreiranju bloka: {e}")
         return jsonify({"error": f"Greška pri kreiranju bloka: {e}"}), 400
+
+    # Validacija bloka
     last_block = blockchain.chain[-1]
     if not blockchain.validate_block(new_block, last_block):
         logging.error("❌ Validacija novog bloka nije uspjela.")
         return jsonify({"error": "Validacija bloka nije uspjela"}), 400
+
+    # Dodavanje bloka u lanac i čuvanje
     blockchain.chain.append(new_block)
     save_blockchain([block.to_dict() for block in blockchain.chain])
+    
     logging.info(f"✅ Blok {new_block.index} primljen i dodan u lanac.")
+
+    # Beleženje rudarskih shareova
     if new_block.resource_tasks:
         miner_id = new_block.miner
         MINER_SHARES[miner_id] = MINER_SHARES.get(miner_id, 0) + 1
         logging.info(f"🔢 Share zabilježen za rudara {miner_id}. Ukupno shareova: {MINER_SHARES[miner_id]}")
+
     return jsonify({"message": "✅ Blok primljen", "block": new_block.to_dict()}), 200
+
 
 @app.route('/buy_rakia', methods=["POST"])
 def buy_rakia():

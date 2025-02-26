@@ -31,7 +31,7 @@ RESOURCE_REWARD = 5
 # Parametri za kupnju Rakia Coina (fiksni peg: 1 XMR = 1 Rakia Coin)
 FEE_PERCENTAGE = 0.1
 
-# Parametri za izračun vrijednosti CPU i RAM resursa u smislu izrudarenih Monera u 1 sat
+# Parametri za izračun vrijednosti CPU i RAM resursa (u smislu izrudarenih Monera u 1 sat)
 # Cilj: 2 CPU i 2GB RAM (2048 MB) daje potencijalni prinos ≈ 0.00001 XMR u 24 sata,
 # tj. oko 4.17e-7 XMR po satu, prije primjene diskonta.
 MONERO_PER_CPU_PER_HOUR = 1.0e-7       # XMR po CPU jedinici u satu
@@ -144,15 +144,15 @@ class Blockchain:
 
 blockchain = Blockchain()
 
-# NOVO: Gradualna 24-satna sesija naplate resursa (24 sata = 1440 minuta)
+# NOVO: Gradualna 24-satna sesija naplate resursa (1440 minuta)
 def resource_usage_session_thread(buyer, cpu, ram, total_minutes=1440):
     """
     Za 2 CPU i 2GB RAM (2048 MB), ukupni trošak u 24 sata je 0.00009 XMR.
     Trošak se skalira prema unesenim vrijednostima:
       total_cost = 0.00009 * (cpu/2) * (ram/2048)
     Svake minute se oduzima minute_cost, pri čemu:
-      - 10% ide u MAIN_WALLET
-      - 90% se raspodjeljuje jednoliko među svim aktivnim rudarima.
+      - 10% ide u MAIN_WALLET,
+      - 90% se jednoliko dijeli među svim aktivnim rudarima.
     """
     total_cost = 0.00009 * (cpu / 2) * (ram / 2048.0)
     minute_cost = total_cost / total_minutes
@@ -182,10 +182,9 @@ def resource_usage_session_thread(buyer, cpu, ram, total_minutes=1440):
 @app.route("/resource_usage_session", methods=["POST"])
 def resource_usage_session():
     """
-    Endpoint za pokretanje 24-satne sesije naplate korištenja resursa.
+    Endpoint za pokretanje 24-satne sesije naplate resursa.
     Trošak se raspoređuje jednoliko po minutama (1440 minuta).
-    Svake minute:
-      - s kupčevog walleta se oduzima minute_cost,
+    Svake minute se s kupčevog walleta oduzima minute_cost,
       - 10% ide u MAIN_WALLET,
       - 90% se jednoliko dijeli među aktivnim rudarima.
     """
@@ -199,6 +198,13 @@ def resource_usage_session():
     if not buyer or cpu <= 0 or ram <= 0:
         return jsonify({"error": "Buyer, CPU i RAM moraju biti zadani i veći od 0"}), 400
 
+    # Dodajemo "dummy" zahtjev u RESOURCE_REQUESTS kako bi miner mogao dohvatiti zahtjev
+    RESOURCE_REQUESTS.append({
+        "buyer": buyer,
+        "cpu": cpu,
+        "ram": ram,
+        "timestamp": int(time.time())
+    })
     thread = threading.Thread(target=resource_usage_session_thread, args=(buyer, cpu, ram))
     thread.start()
     return jsonify({"message": "Resource usage session za 24 sata je pokrenuta."}), 200
@@ -232,16 +238,16 @@ def new_transaction():
     logging.info(f"✅ Nova transakcija: {sender} -> {recipient} ({amount} coins)")
     return jsonify({"message": "Transakcija zabilježena"}), 200
 
-@app.route('/register_miner', methods=['POST'])
+@app.route('/register_miner', methods=["POST"])
 def api_register_miner():
     data = request.json
     return register_miner(data.get("miner_id"), data.get("cpu_available"), data.get("ram_available"))
 
-@app.route('/user_resources/<user>', methods=['GET'])
+@app.route('/user_resources/<user>', methods=["GET"])
 def api_get_user_resources(user):
     return get_user_resources(user)
 
-@app.route('/resource_request', methods=['POST'])
+@app.route('/resource_request', methods=["POST"])
 def api_send_resource_request():
     data = request.json
     buyer = data.get("buyer")
@@ -251,20 +257,20 @@ def api_send_resource_request():
         return jsonify({"error": "❌ Nedostaju parametri"}), 400
     return buy_resources(buyer, cpu, ram, "miner")
 
-@app.route('/resource_request', methods=['GET'])
+@app.route('/resource_request', methods=["GET"])
 def api_get_resource_requests():
     return get_resource_requests()
 
-@app.route('/miners', methods=['GET'])
+@app.route('/miners', methods=["GET"])
 def get_miners():
     return jsonify({"miners": REGISTERED_MINERS}), 200
 
-@app.route('/assign_resources', methods=['POST'])
+@app.route('/assign_resources', methods=["POST"])
 def api_assign_resources():
     data = request.json
     return assign_resources_to_user(data.get("buyer"), data.get("cpu"), data.get("ram"))
 
-@app.route('/mine', methods=['POST'])
+@app.route('/mine', methods=["POST"])
 def api_submit_block():
     block_data = request.json
     required_fields = ["index", "previous_hash", "timestamp", "resource_tasks", "nonce", "hash", "miner"]
@@ -303,7 +309,7 @@ def api_submit_block():
         logging.info(f"🔢 Share zabilježen za rudara {miner_id}. Ukupno shareova: {MINER_SHARES[miner_id]}")
     return jsonify({"message": "✅ Blok primljen", "block": new_block.to_dict()}), 200
 
-@app.route('/buy_rakia', methods=['POST'])
+@app.route('/buy_rakia', methods=["POST"])
 def buy_rakia():
     data = request.json
     buyer = data.get("buyer")
@@ -411,29 +417,6 @@ def resource_usage():
         "miner_rewards": miner_rewards,
         "total_shares": total_shares
     }), 200
-@app.route("/resource_usage_session", methods=["POST"])
-def resource_usage_session():
-    data = request.get_json()
-    buyer = data.get("buyer")
-    try:
-        cpu = float(data.get("cpu", 0))
-        ram = float(data.get("ram", 0))
-    except (TypeError, ValueError):
-        return jsonify({"error": "Neispravne vrijednosti za CPU ili RAM"}), 400
-    if not buyer or cpu <= 0 or ram <= 0:
-        return jsonify({"error": "Buyer, CPU i RAM moraju biti zadani i veći od 0"}), 400
-
-    # Dodajemo "dummy" zahtjev u RESOURCE_REQUESTS kako bi ga miner mogao dohvatiti
-    RESOURCE_REQUESTS.append({
-        "buyer": buyer,
-        "cpu": cpu,
-        "ram": ram,
-        "timestamp": int(time.time())
-    })
-    # Pokrećemo sesiju u zasebnoj niti
-    thread = threading.Thread(target=resource_usage_session_thread, args=(buyer, cpu, ram))
-    thread.start()
-    return jsonify({"message": "Resource usage session za 24 sata je pokrenuta."}), 200
 
 @app.route('/chain', methods=["GET"])
 def get_chain():

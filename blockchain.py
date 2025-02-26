@@ -3,6 +3,7 @@ import json
 import hashlib
 import threading
 import logging
+import requests
 from flask import Flask, request, jsonify
 from flask_socketio import SocketIO, emit
 from functions import (
@@ -27,11 +28,46 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 DIFFICULTY = 4
 RESOURCE_REWARD = 5
 
-# Definiramo glavni wallet (Main Wallet Address)
+# Parametri za kupnju Rakia Coina s Monerom (fiksni peg: 1 XMR = 1 Rakia Coin)
+# BASE_CONVERSION_RATE ovdje se ne koristi za dinamički model, već se direktno prenosi potrošeni XMR,
+# uz naplatu fee-ja od 10%.
+FEE_PERCENTAGE = 0.1
+
+# Parametri za izračun vrijednosti CPU i RAM resursa u smislu izrudarenih Monera u 1 sat
+# (primjerice: koliko se Monera izrudari po CPU jedinici i po MB RAM-a u 1 satu rudarenja)
+MONERO_PER_CPU_PER_HOUR = 0.05    # primjer: 0.05 Monera po CPU jedinici (u satu)
+MONERO_PER_RAM_PER_HOUR = 0.001    # primjer: 0.001 Monera po MB RAM-a (u satu)
+# Rakia Coin vrijednost se računa kao 60% potencijalnog prinosa Monera (40% niža)
+DISCOUNT_FACTOR = 0.6
+
+# Globalne varijable vezane uz kupnju Rakia Coina
+total_monero_purchased = 0.0    # Ako se želi pratiti statistika (ovdje se ne koristi u fiksnom modelu)
+
+# Definiramo glavni wallet (gdje se skuplja fee) – stvarna adresa
 MAIN_WALLET_ADDRESS = "2Ub5eqoKGRjmEGov9dzqNsX4LA7Erd3joSBB"
+# Glavna Monero adresa – za informativne svrhe (transakcije kupnje/prodaje Rakia Coina)
+MAIN_MONERO_ADDRESS = "4AF4YJufiiy2CAekHuunVmc12yR2wNQjHdKse7HwqSWGTdZsrDAwGvv55Fmht6VfsEXFw3RxR95yhXV9Rk5mR1JK67FkhVd"
 
 app = Flask(__name__)
 socketio = SocketIO(app)
+
+def get_monero_price():
+    """
+    Dohvaća trenutnu cijenu Monera u USD s CoinGecko API-ja.
+    """
+    url = "https://api.coingecko.com/api/v3/simple/price?ids=monero&vs_currencies=usd"
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            data = response.json()
+            monero_price = data.get("monero", {}).get("usd")
+            return monero_price
+        else:
+            logging.error("Neuspješno dohvaćanje monero cijene.")
+            return None
+    except Exception as e:
+        logging.error(f"Greška prilikom dohvaćanja monero cijene: {e}")
+        return None
 
 class Block:
     def __init__(self, index, previous_hash, timestamp, transactions, resource_tasks, miner, reward, nonce):
@@ -102,7 +138,6 @@ class Blockchain:
         previous_hash = previous_block.hash
         nonce = 0
         prefix = "0" * DIFFICULTY
-
         while True:
             new_block = Block(index, previous_hash, timestamp, transactions, resource_tasks, miner, RESOURCE_REWARD, nonce)
             if new_block.hash.startswith(prefix):
@@ -136,10 +171,8 @@ def new_transaction():
     sender = data.get("from")
     recipient = data.get("to")
     amount = data.get("amount")
-
     if not sender or not recipient or amount is None:
         return jsonify({"error": "Neispravni podaci za transakciju"}), 400
-
     TRANSACTIONS.append({"from": sender, "to": recipient, "amount": amount})
     logging.info(f"✅ Nova transakcija: {sender} -> {recipient} ({amount} coins)")
     return jsonify({"message": "Transakcija zabilježena"}), 200
@@ -159,10 +192,8 @@ def api_send_resource_request():
     buyer = data.get("buyer")
     cpu = data.get("cpu")
     ram = data.get("ram")
-
     if not buyer or cpu is None or ram is None:
         return jsonify({"error": "❌ Nedostaju parametri"}), 400
-
     return buy_resources(buyer, cpu, ram, "miner")
 
 @app.route('/resource_request', methods=['GET'])
@@ -182,15 +213,11 @@ def api_assign_resources():
 def api_submit_block():
     block_data = request.json
     required_fields = ["index", "previous_hash", "timestamp", "resource_tasks", "nonce", "hash", "miner"]
-
-    # Provjera da li su sva potrebna polja prisutna
     missing_fields = [field for field in required_fields if field not in block_data]
     if missing_fields:
         logging.error(f"❌ Nedostaju polja u bloku: {missing_fields}")
         return jsonify({"error": "Neispravni podaci bloka", "missing_fields": missing_fields}), 400
-
     try:
-        # Pokušaj kreirati novi blok
         new_block = Block(
             index=block_data["index"],
             previous_hash=block_data["previous_hash"],
@@ -201,38 +228,27 @@ def api_submit_block():
             reward=RESOURCE_REWARD,
             nonce=block_data["nonce"]
         )
-
-        # Provjera da li je hash ispravan
         calculated_hash = new_block.calculate_hash()
         if calculated_hash != block_data["hash"]:
             logging.error(f"❌ Neispravan hash: Očekivan {calculated_hash}, primljen {block_data['hash']}")
             return jsonify({"error": "Neispravan hash", "expected": calculated_hash, "received": block_data["hash"]}), 400
-
     except Exception as e:
         logging.error(f"❌ Greška pri kreiranju bloka: {e}")
         return jsonify({"error": f"Greška pri kreiranju bloka: {e}"}), 400
-
-    # Validacija bloka
     last_block = blockchain.chain[-1]
     if not blockchain.validate_block(new_block, last_block):
         logging.error("❌ Validacija novog bloka nije uspjela.")
         return jsonify({"error": "Validacija bloka nije uspjela"}), 400
-
-    # Dodavanje bloka u lanac
     blockchain.chain.append(new_block)
     save_blockchain([block.to_dict() for block in blockchain.chain])
     logging.info(f"✅ Blok {new_block.index} primljen i dodan u lanac.")
-
-    # NOVA LOGIKA: Proces nagrade
-    # Ako blok sadrži resource task, kupac plaća iz svog walleta tražene resurse,
-    # od čega 10% ide u MAIN_WALLET (koji je sada stvarna adresa), a preostalih 90% rudaru.
     if new_block.resource_tasks:
         task = new_block.resource_tasks[0]
         buyer = task.get("buyer")
         cpu_req = task.get("cpu")
         ram_req = task.get("ram")
         total_price = (cpu_req + ram_req) * 2
-        fee = total_price * 0.1
+        fee = total_price * FEE_PERCENTAGE
         miner_reward = total_price - fee
         wallets = load_wallets()
         if wallets.get(buyer, 0) >= total_price:
@@ -243,8 +259,81 @@ def api_submit_block():
             logging.info(f"💰 Transakcija: Od kupca {buyer} skinuto {total_price} coina, miner {new_block.miner} dobio {miner_reward} coina, glavni wallet ({MAIN_WALLET_ADDRESS}) dobio {fee} coina.")
         else:
             logging.error(f"❌ Kupac {buyer} nema dovoljno coina za plaćanje nagrade.")
-
     return jsonify({"message": "✅ Blok primljen", "block": new_block.to_dict()}), 200
+
+@app.route('/buy_rakia', methods=['POST'])
+def buy_rakia():
+    """
+    Endpoint za kupnju Rakia Coina s Monerom (fiksni peg: 1 XMR = 1 Rakia Coin).
+    Ulazni parametri (JSON):
+      - buyer: adresa kupca (wallet)
+      - monero_amount: količina Monera koju kupac želi potrošiti
+    Rezultat:
+      - Rakia Coin primljen = potrošeni XMR umanjen za fee (10%)
+      - Informativno: cijena Monera, glavna Monero adresa, i provjera izvršenja transakcije
+    """
+    data = request.json
+    buyer = data.get("buyer")
+    try:
+        monero_amount = float(data.get("monero_amount", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Neispravna količina Monera"}), 400
+    if not buyer or monero_amount <= 0:
+        return jsonify({"error": "Kupac i količina Monera moraju biti zadani"}), 400
+    monero_price = get_monero_price()
+    if monero_price is None:
+        return jsonify({"error": "Nije moguće dohvatiti cijenu Monera"}), 500
+    fee = monero_amount * FEE_PERCENTAGE
+    rakia_received = monero_amount - fee
+    wallets = load_wallets()
+    previous_balance = wallets.get(buyer, 0)
+    wallets[buyer] = previous_balance + rakia_received
+    wallets[MAIN_MONERO_ADDRESS] = wallets.get(MAIN_MONERO_ADDRESS, 0) + fee
+    save_wallets(wallets)
+    wallets_after = load_wallets()
+    new_balance = wallets_after.get(buyer, 0)
+    transaction_executed = (new_balance >= previous_balance + rakia_received)
+    logging.info(f"💰 Kupnja Rakia Coina: Kupac {buyer} potrošio je {monero_amount} Monera, primio {rakia_received} Rakia Coina.")
+    logging.info(f"Glavna Monero adresa za transakcije: {MAIN_MONERO_ADDRESS}")
+    logging.info(f"Trenutna cijena Monera: {monero_price} USD (informativno)")
+    return jsonify({
+        "message": "Kupnja uspješna",
+        "buyer": buyer,
+        "monero_spent": monero_amount,
+        "rakia_received": rakia_received,
+        "fee": fee,
+        "main_monero_address": MAIN_MONERO_ADDRESS,
+        "transaction_executed": transaction_executed
+    }), 200
+
+@app.route('/resource_value', methods=['POST'])
+def resource_value():
+    """
+    Endpoint za izračun vrijednosti CPU i RAM resursa u Rakia Coin.
+    Ulazni parametri (JSON):
+      - cpu: broj CPU jedinica kupljenih od strane klijenta
+      - ram: količina RAM-a (u MB) kupljena od strane klijenta
+    Izračun:
+      - Potencijalni prinos Monera u 1 satu rudarenja = (cpu * MONERO_PER_CPU_PER_HOUR) + (ram * MONERO_PER_RAM_PER_HOUR)
+      - Vrijednost resursa u Rakia Coin = potencijalni prinos * DISCOUNT_FACTOR
+        (odnosno, 40% manje od potencijalnog prinosa)
+    """
+    try:
+        cpu = float(request.json.get("cpu", 0))
+        ram = float(request.json.get("ram", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Neispravne vrijednosti za CPU ili RAM"}), 400
+    potential_monero = cpu * MONERO_PER_CPU_PER_HOUR + ram * MONERO_PER_RAM_PER_HOUR
+    resource_value_rakia = potential_monero * DISCOUNT_FACTOR
+    # Osiguravamo da vrijednost Rakia Coina ne prelazi potencijalni prinos (mada DISCOUNT_FACTOR < 1)
+    resource_value_rakia = min(resource_value_rakia, potential_monero)
+    return jsonify({
+        "cpu": cpu,
+        "ram": ram,
+        "potential_monero": potential_monero,
+        "resource_value_rakia": resource_value_rakia,
+        "discount_factor": DISCOUNT_FACTOR
+    }), 200
 
 @app.route('/chain', methods=['GET'])
 def get_chain():

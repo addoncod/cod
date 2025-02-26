@@ -21,6 +21,7 @@ from functions import (
     REGISTERED_MINERS,
     RESOURCE_REQUESTS
 )
+TRANSACTIONS = []
 
 # Konfiguracija logiranja
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -127,18 +128,26 @@ class Blockchain:
             logging.error("❌ Neuspješna validacija novog bloka")
             return None
 
-    def mine_block(self, previous_block, transactions, resource_tasks, miner):
+    def mine_block(self, previous_block, resource_tasks, miner):
+        """Proces rudarenja bloka koji uključuje transakcije."""
         index = previous_block.index + 1
         timestamp = int(time.time())
         previous_hash = previous_block.hash
         nonce = 0
         prefix = "0" * DIFFICULTY
+    
+        global TRANSACTIONS  # Koristimo globalnu listu transakcija
+        transactions = TRANSACTIONS.copy()  # Kopiramo transakcije
+        TRANSACTIONS.clear()  # Brišemo transakcije nakon rudarenja
+    
         while True:
             new_block = Block(index, previous_hash, timestamp, transactions, resource_tasks, miner, RESOURCE_REWARD, nonce)
             if new_block.hash.startswith(prefix):
-                logging.info(f"⛏️  Blok {index} iskopan | Rudar: {miner} | Nagrada: {RESOURCE_REWARD} coins | Hash: {new_block.hash}")
+                logging.info(f"⛏️  Blok {index} iskopan | Rudar: {miner} | Transakcije: {len(transactions)} | Hash: {new_block.hash}")
                 return new_block
             nonce += 1
+
+
 
 blockchain = Blockchain()
 
@@ -249,18 +258,21 @@ def api_buy_resources():
 def api_get_balance(address):
     return jsonify({"balance": get_balance(address)})
 
-TRANSACTIONS = []
 @app.route('/transaction', methods=['POST'])
 def new_transaction():
     data = request.json
     sender = data.get("from")
     recipient = data.get("to")
     amount = data.get("amount")
+
     if not sender or not recipient or amount is None:
         return jsonify({"error": "Neispravni podaci za transakciju"}), 400
+
     TRANSACTIONS.append({"from": sender, "to": recipient, "amount": amount})
-    logging.info(f"✅ Nova transakcija: {sender} -> {recipient} ({amount} coins)")
+    logging.info(f"✅ Nova transakcija dodata: {sender} -> {recipient} ({amount} coins)")
+
     return jsonify({"message": "Transakcija zabilježena"}), 200
+
 
 @app.route('/register_miner', methods=["POST"])
 def api_register_miner():

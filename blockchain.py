@@ -32,14 +32,14 @@ RESOURCE_REWARD = 5
 # Parametri za kupnju Rakia Coina (fiksni peg: 1 XMR = 1 Rakia Coin)
 FEE_PERCENTAGE = 0.1
 
-# Parametri za izračun vrijednosti CPU i RAM resursa (u smislu izrudarenih Monera u 1 sat)
+# Parametri za izračun vrijednosti CPU i RAM resursa u smislu izrudarenih Monera u 1 sat
 # Cilj: 2 CPU i 2GB RAM (2048 MB) daje potencijalni prinos ≈ 0.00001 XMR u 24 sata,
 # tj. oko 4.17e-7 XMR po satu, prije primjene diskonta.
 MONERO_PER_CPU_PER_HOUR = 1.0e-7       # XMR po CPU jedinici u satu
 MONERO_PER_RAM_PER_HOUR = 1.058e-10     # XMR po MB RAM-a u satu
 DISCOUNT_FACTOR = 0.6  # Kupac dobiva 60% potencijalnog prinosa
 
-# Globalna varijabla za praćenje shareova rudara tijekom jednog sata
+# Globalna varijabla za praćenje shareova rudara (dakle rudari koji su isporučili resurse)
 MINER_SHARES = {}
 
 # Definiramo glavni wallet (za fee) i glavnu Monero adresu (informativno)
@@ -145,6 +145,25 @@ class Blockchain:
 
 blockchain = Blockchain()
 
+# NOVO: Funkcija koja provjerava status rudara (simulirano)
+def get_active_miners():
+    """
+    Pokušava dohvatiti status svakog rudara putem simuliranog endpointa /miner_status.
+    Vraća rječnik rudara koji su aktivni.
+    """
+    active_miners = {}
+    for miner_id in REGISTERED_MINERS.keys():
+        try:
+            # Simulacija: pretpostavimo da rudari uvijek odgovaraju; ovdje možete implementirati stvarnu provjeru.
+            response = requests.get(f"{NODE_URL}/miner_status?miner_id={miner_id}", timeout=2)
+            if response.status_code == 200:
+                active_miners[miner_id] = REGISTERED_MINERS[miner_id]
+            else:
+                logging.error(f"Miner {miner_id} nije aktivan (status {response.status_code}).")
+        except Exception as e:
+            logging.error(f"Miner {miner_id} offline ili nije dostupan: {e}")
+    return active_miners
+
 # NOVO: Gradualna 24-satna sesija naplate resursa (1440 minuta)
 def resource_usage_session_thread(buyer, cpu, ram, total_minutes=1440):
     """
@@ -153,7 +172,7 @@ def resource_usage_session_thread(buyer, cpu, ram, total_minutes=1440):
       total_cost = 0.00009 * (cpu/2) * (ram/2048)
     Svake minute se oduzima minute_cost, pri čemu:
       - 10% ide u MAIN_WALLET,
-      - 90% se jednoliko dijeli među svim aktivnim rudarima.
+      - 90% se raspoređuje među rudarima koji su isporučili resurse (dakle, oni u MINER_SHARES).
     """
     total_cost = 0.00009 * (cpu / 2) * (ram / 2048.0)
     minute_cost = total_cost / total_minutes
@@ -168,11 +187,17 @@ def resource_usage_session_thread(buyer, cpu, ram, total_minutes=1440):
         if buyer_balance >= minute_cost:
             wallets[buyer] = buyer_balance - minute_cost
             wallets[MAIN_WALLET] = wallets.get(MAIN_WALLET, 0) + fee_per_minute
-            num_miners = len(REGISTERED_MINERS)
-            if num_miners > 0:
-                reward_each = miner_reward_per_minute / num_miners
-                for miner_id in REGISTERED_MINERS.keys():
+            # Dohvatimo aktivne rudare
+            active_miners = get_active_miners()
+            # Izračunamo presjek aktivnih rudara i onih koji su isporučili resurse (MINER_SHARES)
+            delivering_miners = {m_id: active_miners[m_id] for m_id in MINER_SHARES if m_id in active_miners}
+            num_delivering = len(delivering_miners)
+            if num_delivering > 0:
+                reward_each = miner_reward_per_minute / num_delivering
+                for miner_id in delivering_miners:
                     wallets[miner_id] = wallets.get(miner_id, 0) + reward_each
+            else:
+                logging.error("Nema rudara koji su isporučili resurse (MINER_SHARES presjek s aktivnim rudarima prazan).")
             save_wallets(wallets)
             logging.info(f"Minute {i+1}/{total_minutes}: {buyer} - oduzeto {minute_cost:.2e} XMR")
         else:
@@ -183,11 +208,11 @@ def resource_usage_session_thread(buyer, cpu, ram, total_minutes=1440):
 @app.route("/resource_usage_session", methods=["POST"])
 def resource_usage_session():
     """
-    Endpoint za pokretanje 24-satne sesije naplate resursa.
+    Endpoint za pokretanje 24-satne sesije naplate korištenja resursa.
     Trošak se raspoređuje jednoliko po minutama (1440 minuta).
     Svake minute se s kupčevog walleta oduzima minute_cost,
       - 10% ide u MAIN_WALLET,
-      - 90% se jednoliko dijeli među aktivnim rudarima.
+      - 90% se raspoređuje među rudarima koji su isporučili resurse (prema MINER_SHARES).
     """
     data = request.get_json()
     buyer = data.get("buyer")
@@ -199,7 +224,7 @@ def resource_usage_session():
     if not buyer or cpu <= 0 or ram <= 0:
         return jsonify({"error": "Buyer, CPU i RAM moraju biti zadani i veći od 0"}), 400
 
-    # Dodajemo "dummy" zahtjev u RESOURCE_REQUESTS kako bi miner mogao dohvatiti zahtjev
+    # Dodajemo "dummy" zahtjev u RESOURCE_REQUESTS kako bi ga miner mogao dohvatiti
     RESOURCE_REQUESTS.append({
         "buyer": buyer,
         "cpu": cpu,
@@ -399,6 +424,7 @@ def resource_usage():
     fee = total_cost * 0.1
     miner_pool = total_cost - fee
     wallets[MAIN_WALLET_ADDRESS] = wallets.get(MAIN_WALLET_ADDRESS, 0) + fee
+    # Distribuiramo samo rudare koji su evidentirani u MINER_SHARES
     total_shares = sum(MINER_SHARES.values())
     if total_shares == 0:
         return jsonify({"error": "Nema shareova za raspodjelu"}), 400

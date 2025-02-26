@@ -3,6 +3,9 @@ import json
 import logging
 import threading
 from flask import Flask, request, jsonify
+from flask_socketio import SocketIO, emit
+app = Flask(__name__)
+socketio = SocketIO(app)
 
 # Konfiguracija logiranja
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")

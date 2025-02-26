@@ -68,6 +68,9 @@ class Blockchain:
         self.chain = load_blockchain()
         if not self.chain:
             self.create_genesis_block()
+        else:
+            # Provjera da li su svi blokovi validni
+            self.chain = [Block(**block) if isinstance(block, dict) else block for block in self.chain]
 
     def create_genesis_block(self):
         genesis_block = Block(0, "0", int(time.time()), [], [], "GENESIS", 0)
@@ -106,7 +109,16 @@ def api_register_miner():
 @app.route("/chain", methods=["GET"])
 def get_chain():
     """Vraća cijeli blockchain u JSON formatu"""
-    return jsonify([block if isinstance(block, dict) else block.to_dict() for block in blockchain.chain]), 200
+    return jsonify([block.to_dict() if isinstance(block, Block) else block for block in blockchain.chain]), 200
+
+@app.route("/miners", methods=["GET"])
+def get_miners():
+    """Vraća listu registrovanih rudara"""
+    return jsonify({"miners": REGISTERED_MINERS}), 200
+
+@app.route("/user_resources/<user>", methods=["GET"])
+def api_get_user_resources(user):
+    return get_user_resources(user)
 
 @app.route("/resource_request", methods=["GET"])
 def api_get_resource_requests():

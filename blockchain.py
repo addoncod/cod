@@ -35,8 +35,8 @@ FEE_PERCENTAGE = 0.1
 # Parametri za izračun vrijednosti resursa u smislu izrudarenih Monera u 1 sat
 # Cilj: 2 CPU i 2GB RAM (2048 MB) daje potencijalni prinos ≈ 0.00001 XMR u 24 sata,
 # tj. oko 4.17e-7 XMR po satu, prije primjene diskonta.
-MONERO_PER_CPU_PER_HOUR = 1.0e-7       # XMR po CPU jedinici u satu
-MONERO_PER_RAM_PER_HOUR = 1.058e-10     # XMR po MB RAM-a u satu
+MONERO_PER_CPU_PER_HOUR = 0.0000001       # XMR po CPU jedinici u satu
+MONERO_PER_RAM_PER_HOUR = 0.0000000001058     # XMR po MB RAM-a u satu
 DISCOUNT_FACTOR = 0.6  # Kupac dobiva 60% potencijalnog prinosa
 
 # Globalna varijabla za praćenje shareova rudara – tj. rudari koji su isporučili resurse

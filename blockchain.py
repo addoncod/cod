@@ -14,9 +14,9 @@ from functions import (
     save_blockchain, 
     load_blockchain,
     assign_resources_to_user,
-    register_miner
+    register_miner,
+    REGISTERED_MINERS  # Dodan uvoz REGISTERED_MINERS
 )
-
 # Konfiguracija logiranja
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 

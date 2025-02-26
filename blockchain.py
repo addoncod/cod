@@ -18,7 +18,8 @@ from functions import (
     save_wallets,
     assign_resources_to_user,
     register_miner,
-    REGISTERED_MINERS
+    REGISTERED_MINERS,
+    RESOURCE_REQUESTS
 )
 
 # Konfiguracija logiranja

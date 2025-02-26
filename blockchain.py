@@ -1,176 +1,228 @@
 import time
 import json
-import hashlib
-import threading
 import logging
-import requests
+import threading
 from flask import Flask, request, jsonify
-from flask_socketio import SocketIO, emit
-from functions import (
-    add_balance, 
-    buy_resources, 
-    get_balance, 
-    get_user_resources, 
-    get_resource_requests, 
-    save_blockchain, 
-    load_blockchain,
-    load_wallets,
-    save_wallets,
-    assign_resources_to_user,
-    register_miner,
-    REGISTERED_MINERS,
-    RESOURCE_REQUESTS
-)
 
 # Konfiguracija logiranja
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-# Parametri blockchaina
-DIFFICULTY = 4
-RESOURCE_REWARD = 5
+# Datoteke za pohranu podataka
+BLOCKCHAIN_FILE = "blockchain_data.json"
+WALLETS_FILE = "wallets.json"
 
-# Parametri za kupnju Rakia Coina (fiksni peg: 1 XMR = 1 Rakia Coin)
-FEE_PERCENTAGE = 0.1
+# Globalni rječnici i liste
+USER_RESOURCES = {}         # Resursi korisnika (npr. CPU, RAM)
+RESOURCE_REQUESTS = []      # Lista zahtjeva za resurse
+REGISTERED_MINERS = {}      # Evidencija aktivnih minera
 
-# Parametri za izračun vrijednosti resursa u smislu izrudarenih Monera u 1 sat
+# Parametri za izračun vrijednosti resursa (u smislu izrudarenih Monera)
 # Cilj: 2 CPU i 2GB RAM (2048 MB) daje potencijalni prinos ≈ 0.00001 XMR u 24 sata,
 # tj. oko 4.17e-7 XMR po satu, prije primjene diskonta.
 MONERO_PER_CPU_PER_HOUR = 1.0e-7       # XMR po CPU jedinici u satu
 MONERO_PER_RAM_PER_HOUR = 1.058e-10     # XMR po MB RAM-a u satu
-DISCOUNT_FACTOR = 0.6  # Kupac dobiva 60% potencijalnog prinosa
+DISCOUNT_FACTOR = 0.6                  # Kupac dobiva 60% potencijalnog prinosa
 
-# Globalna varijabla za praćenje shareova rudara – tj. rudari koji su isporučili resurse
-MINER_SHARES = {}
-
-# Definiramo glavni wallet (za fee) i glavnu Monero adresu (informativno)
-MAIN_WALLET_ADDRESS = "2Ub5eqoKGRjmEGov9dzqNsX4LA7Erd3joSBB"
-MAIN_MONERO_ADDRESS = "4AF4YJufiiy2CAekHuunVmc12yR2wNQjHdKse7HwqSWGTdZsrDAwGvv55Fmht6VfsEXFw3RxR95yhXV9Rk5mR1JK67FkhVd"
+# Glavni wallet (gdje se skuplja fee)
+MAIN_WALLET = "MAIN_WALLET"
 
 app = Flask(__name__)
-socketio = SocketIO(app)
 
-def get_monero_price():
-    """Dohvaća trenutnu cijenu Monera u USD s CoinGecko API-ja."""
-    url = "https://api.coingecko.com/api/v3/simple/price?ids=monero&vs_currencies=usd"
+def save_blockchain(blockchain):
     try:
-        response = requests.get(url)
-        if response.status_code == 200:
-            data = response.json()
-            return data.get("monero", {}).get("usd")
-        else:
-            logging.error("Neuspješno dohvaćanje monero cijene.")
-            return None
+        with open(BLOCKCHAIN_FILE, "w") as f:
+            json.dump([block for block in blockchain], f, indent=4)
+        logging.info("✅ Blockchain uspješno spremljen.")
     except Exception as e:
-        logging.error(f"Greška pri dohvaćanju monero cijene: {e}")
-        return None
+        logging.error(f"❌ Greška pri spremanju blockchaina: {e}")
 
-class Block:
-    def __init__(self, index, previous_hash, timestamp, transactions, resource_tasks, miner, reward, nonce):
-        self.index = index
-        self.previous_hash = previous_hash
-        self.timestamp = timestamp
-        self.transactions = transactions
-        self.resource_tasks = resource_tasks
-        self.miner = miner
-        self.reward = reward
-        self.nonce = nonce
-        self.hash = self.calculate_hash()
+def load_blockchain():
+    try:
+        with open(BLOCKCHAIN_FILE, "r") as f:
+            blockchain = json.load(f)
+            logging.info("✅ Blockchain uspješno učitan.")
+            return blockchain
+    except (FileNotFoundError, json.JSONDecodeError):
+        logging.warning("⚠️  Blockchain datoteka ne postoji ili je oštećena, kreiram GENESIS blok.")
+        return [{
+            "index": 0,
+            "previous_hash": "0",
+            "timestamp": 0,
+            "transactions": [],
+            "resource_tasks": [],
+            "miner": "GENESIS",
+            "reward": 0,
+            "nonce": 0,
+            "hash": "0"
+        }]
 
-    def calculate_hash(self):
-        data_str = f"{self.index}{self.previous_hash}{self.timestamp}{self.transactions}{self.resource_tasks}{self.miner}{self.reward}{self.nonce}".encode()
-        return hashlib.sha256(data_str).hexdigest()
+def load_wallets():
+    try:
+        with open(WALLETS_FILE, "r") as f:
+            wallets = json.load(f)
+            logging.info("✅ Walletovi uspješno učitani.")
+            return wallets
+    except (FileNotFoundError, json.JSONDecodeError):
+        logging.warning("⚠️  Wallet datoteka ne postoji ili je oštećena, kreiram novu.")
+        return {}
 
-    def to_dict(self):
-        return self.__dict__
+def save_wallets(wallets):
+    try:
+        with open(WALLETS_FILE, "w") as f:
+            json.dump(wallets, f, indent=4)
+        logging.info("✅ Walletovi uspješno spremljeni.")
+    except Exception as e:
+        logging.error(f"❌ Greška pri spremanju walletova: {e}")
 
-class Blockchain:
-    def __init__(self):
-        self.chain = []
-        chain_data = load_blockchain()
-        for block in chain_data:
-            if isinstance(block, dict):
-                new_block = Block(
-                    index=block["index"],
-                    previous_hash=block["previous_hash"],
-                    timestamp=block["timestamp"],
-                    transactions=block.get("transactions", []),
-                    resource_tasks=block.get("resource_tasks", []),
-                    miner=block["miner"],
-                    reward=block["reward"],
-                    nonce=block["nonce"]
-                )
-                if block.get("hash") and block.get("hash") != new_block.hash:
-                    logging.warning(f"⚠️  Neusklađen hash za blok {new_block.index}")
-                self.chain.append(new_block)
-            else:
-                self.chain.append(block)
+def add_balance(user_address, amount):
+    if not user_address or amount is None:
+        return jsonify({"message": "❌ Nedostaju parametri"}), 400
+    wallets = load_wallets()
+    wallets[user_address] = wallets.get(user_address, 0) + amount
+    save_wallets(wallets)
+    logging.info(f"✅ Dodano {amount} coina korisniku {user_address}.")
+    return jsonify({"message": f"{amount} coina dodato korisniku {user_address}", "balance": wallets[user_address]}), 200
 
-    def validate_block(self, new_block, previous_block):
-        if previous_block.index + 1 != new_block.index:
-            return False
-        if previous_block.hash != new_block.previous_hash:
-            return False
-        if new_block.calculate_hash() != new_block.hash:
-            return False
-        if not new_block.hash.startswith("0" * DIFFICULTY):
-            return False
-        return True
+def buy_resources(buyer, cpu, ram, seller):
+    wallets = load_wallets()
+    wallets[buyer] = wallets.get(buyer, 0)
+    wallets[seller] = wallets.get(seller, 0)
+    total_price = (cpu + ram) * 2
+    if wallets.get(buyer, 0) < total_price:
+        return jsonify({"error": "❌ Nedovoljno coina"}), 400
+    wallets[buyer] -= total_price
+    wallets[seller] += total_price
+    save_wallets(wallets)
+    if buyer not in USER_RESOURCES:
+        USER_RESOURCES[buyer] = {"cpu": 0, "ram": 0}
+    USER_RESOURCES[buyer]["cpu"] += cpu
+    USER_RESOURCES[buyer]["ram"] += ram
+    RESOURCE_REQUESTS.append({
+        "buyer": buyer,
+        "cpu": cpu,
+        "ram": ram,
+        "timestamp": int(time.time())
+    })
+    logging.info(f"✅ Resursi kupljeni: Kupac {buyer}, CPU {cpu}, RAM {ram} MB, Prodavač {seller}")
+    return jsonify({"message": "Resursi kupljeni", "balance": wallets[buyer]}), 200
 
-    def add_block(self, transactions, resource_tasks, miner):
-        new_block = self.mine_block(self.chain[-1], transactions, resource_tasks, miner)
-        if self.validate_block(new_block, self.chain[-1]):
-            self.chain.append(new_block)
-            save_blockchain([block.to_dict() for block in self.chain])
-            logging.info(f"✅ Blok {new_block.index} uspješno dodan")
-            return new_block
-        else:
-            logging.error("❌ Neuspješna validacija novog bloka")
-            return None
+def get_balance(address):
+    wallets = load_wallets()
+    return wallets.get(address, 0)
 
-    def mine_block(self, previous_block, transactions, resource_tasks, miner):
-        index = previous_block.index + 1
-        timestamp = int(time.time())
-        previous_hash = previous_block.hash
-        nonce = 0
-        prefix = "0" * DIFFICULTY
-        while True:
-            new_block = Block(index, previous_hash, timestamp, transactions, resource_tasks, miner, RESOURCE_REWARD, nonce)
-            if new_block.hash.startswith(prefix):
-                logging.info(f"⛏️  Blok {index} iskopan | Rudar: {miner} | Nagrada: {RESOURCE_REWARD} coins | Hash: {new_block.hash}")
-                return new_block
-            nonce += 1
+def get_user_resources(user):
+    resources = USER_RESOURCES.get(user, {"cpu": 0, "ram": 0})
+    return jsonify({"message": "📊 Resursi korisnika", "resources": resources}), 200
 
-blockchain = Blockchain()
+def get_resource_requests():
+    return jsonify({"requests": RESOURCE_REQUESTS}), 200
 
-# NOVO: Funkcija koja provjerava status rudara (simulirano)
-def get_active_miners():
+def assign_resources_to_user(buyer, cpu, ram):
+    if not buyer or cpu is None or ram is None:
+        return jsonify({"error": "❌ Neispravni parametri"}), 400
+    if not REGISTERED_MINERS:
+        return jsonify({"error": "❌ Nema aktivnih minera"}), 400
+    miner_contributions = {}
+    remaining_cpu = cpu
+    remaining_ram = ram
+    miners = []
+    for miner_id, resources in REGISTERED_MINERS.items():
+        miners.append({
+            "miner_id": miner_id,
+            "cpu": resources["cpu"],
+            "ram": resources["ram"]
+        })
+        miner_contributions[miner_id] = {"cpu": 0, "ram": 0}
+    num_miners = len(miners)
+    ideal_cpu = remaining_cpu / num_miners
+    ideal_ram = remaining_ram / num_miners
+    for miner in miners:
+        allocated_cpu = min(ideal_cpu, miner["cpu"])
+        allocated_ram = min(ideal_ram, miner["ram"])
+        miner_contributions[miner["miner_id"]]["cpu"] += allocated_cpu
+        miner_contributions[miner["miner_id"]]["ram"] += allocated_ram
+        remaining_cpu -= allocated_cpu
+        remaining_ram -= allocated_ram
+        REGISTERED_MINERS[miner["miner_id"]]["cpu"] -= allocated_cpu
+        REGISTERED_MINERS[miner["miner_id"]]["ram"] -= allocated_ram
+        miner["cpu"] -= allocated_cpu
+        miner["ram"] -= allocated_ram
+    while (remaining_cpu > 0 or remaining_ram > 0) and any(m["cpu"] > 0 or m["ram"] > 0 for m in miners):
+        available_miners = [m for m in miners if m["cpu"] > 0 or m["ram"] > 0]
+        n_avail = len(available_miners)
+        extra_cpu_share = remaining_cpu / n_avail if n_avail else 0
+        extra_ram_share = remaining_ram / n_avail if n_avail else 0
+        for miner in available_miners:
+            additional_cpu = min(extra_cpu_share, miner["cpu"])
+            additional_ram = min(extra_ram_share, miner["ram"])
+            miner_contributions[miner["miner_id"]]["cpu"] += additional_cpu
+            miner_contributions[miner["miner_id"]]["ram"] += additional_ram
+            remaining_cpu -= additional_cpu
+            remaining_ram -= additional_ram
+            REGISTERED_MINERS[miner["miner_id"]]["cpu"] -= additional_cpu
+            REGISTERED_MINERS[miner["miner_id"]]["ram"] -= additional_ram
+            miner["cpu"] -= additional_cpu
+            miner["ram"] -= additional_ram
+        if not any(m["cpu"] > 0 or m["ram"] > 0 for m in available_miners):
+            break
+    if remaining_cpu > 0 or remaining_ram > 0:
+        return jsonify({"error": "❌ Nedovoljno resursa kod aktivnih minera za isporuku traženih resursa."}), 400
+    if buyer not in USER_RESOURCES:
+        USER_RESOURCES[buyer] = {"cpu": 0, "ram": 0}
+    USER_RESOURCES[buyer]["cpu"] += cpu
+    USER_RESOURCES[buyer]["ram"] += ram
+    logging.info(f"✅ Resursi dodijeljeni kupcu {buyer}: CPU {cpu}, RAM {ram} MB.")
+    logging.info(f"Distribucija po rudarima: {miner_contributions}")
+    return jsonify({
+        "message": "✅ Resursi dodijeljeni",
+        "user_resources": USER_RESOURCES[buyer],
+        "miner_contributions": miner_contributions
+    }), 200
+
+def register_miner(miner_id, cpu_available, ram_available):
+    if not miner_id or cpu_available is None or ram_available is None:
+        return jsonify({"error": "❌ Neispravni podaci za rudara"}), 400
+    REGISTERED_MINERS[miner_id] = {"cpu": cpu_available, "ram": ram_available}
+    wallets = load_wallets()
+    wallets.setdefault(miner_id, 0)
+    save_wallets(wallets)
+    logging.info(f"⛏️  Rudar {miner_id} registriran sa {cpu_available} CPU i {ram_available} MB RAM-a.")
+    return jsonify({"message": "✅ Rudar uspješno registriran", "miners": REGISTERED_MINERS}), 200
+
+def resource_value():
     """
-    Pokušava dohvatiti status svakog rudara putem simuliranog endpointa /miner_status.
-    Rudari koji odgovore (status 200) smatraju se aktivnima.
+    Izračun vrijednosti resursa u Rakia Coin.
+    Potencijalni prinos u 1 satu rudarenja:
+      = (cpu * MONERO_PER_CPU_PER_HOUR) + (ram * MONERO_PER_RAM_PER_HOUR)
+    Vrijednost koja kupcu "ostaje" primjenom DISCOUNT_FACTOR:
+      = potencijalni_prinos * DISCOUNT_FACTOR
     """
-    active_miners = {}
-    for miner_id in REGISTERED_MINERS.keys():
-        try:
-            # Simulacija: pretpostavljamo da rudari odgovaraju. U stvarnosti, implementirajte stvarnu provjeru.
-            response = requests.get(f"{NODE_URL}/miner_status?miner_id={miner_id}", timeout=2)
-            if response.status_code == 200:
-                active_miners[miner_id] = REGISTERED_MINERS[miner_id]
-            else:
-                logging.error(f"Miner {miner_id} nije aktivan (status {response.status_code}).")
-        except Exception as e:
-            logging.error(f"Miner {miner_id} offline ili nije dostupan: {e}")
-    return active_miners
+    try:
+        cpu = float(request.json.get("cpu", 0))
+        ram = float(request.json.get("ram", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Neispravne vrijednosti za CPU ili RAM"}), 400
+    potential_monero = cpu * MONERO_PER_CPU_PER_HOUR + ram * MONERO_PER_RAM_PER_HOUR
+    resource_value_rakia = potential_monero * DISCOUNT_FACTOR
+    resource_value_rakia = min(resource_value_rakia, potential_monero)
+    return jsonify({
+        "cpu": cpu,
+        "ram": ram,
+        "potential_monero": potential_monero,
+        "resource_value_rakia": resource_value_rakia,
+        "discount_factor": DISCOUNT_FACTOR
+    }), 200
 
-# NOVO: Gradualna 24-satna sesija naplate resursa (1440 minuta)
+# --- NOVO: Gradualno naplaćivanje resursa tijekom 24 sata (1440 minuta) ---
 def resource_usage_session_thread(buyer, cpu, ram, total_minutes=1440):
     """
     Za 2 CPU i 2GB RAM (2048 MB), ukupni trošak u 24 sata je 0.00009 XMR.
     Trošak se skalira prema unesenim vrijednostima:
       total_cost = 0.00009 * (cpu/2) * (ram/2048)
-    Svake minute se oduzima minute_cost s kupčevog walleta, a:
+    Svake minute se s kupčevog walleta oduzima minute_cost, pri čemu:
       - 10% ide u MAIN_WALLET,
-      - 90% se raspoređuje među rudarima koji su isporučili resurse (tj. oni u MINER_SHARES)
-         * Međutim, prije raspodjele provjeravamo aktivnost rudara.
+      - 90% se raspoređuje među rudarima koji su isporučili resurse (prema MINER_SHARES)
+        ali samo onima koji su trenutno aktivni.
     """
     total_cost = 0.00009 * (cpu / 2) * (ram / 2048.0)
     minute_cost = total_cost / total_minutes
@@ -187,7 +239,7 @@ def resource_usage_session_thread(buyer, cpu, ram, total_minutes=1440):
             wallets[MAIN_WALLET] = wallets.get(MAIN_WALLET, 0) + fee_per_minute
             # Dohvat aktivnih rudara
             active_miners = get_active_miners()
-            # Presjek rudara koji su isporučili resurse (MINER_SHARES) i aktivnih rudara
+            # Presjek aktivnih rudara i onih koji su isporučili resurse (MINER_SHARES)
             delivering_miners = {m_id: active_miners[m_id] for m_id in MINER_SHARES if m_id in active_miners}
             num_delivering = len(delivering_miners)
             if num_delivering > 0:
@@ -200,7 +252,7 @@ def resource_usage_session_thread(buyer, cpu, ram, total_minutes=1440):
             logging.info(f"Minute {i+1}/{total_minutes}: {buyer} - oduzeto {minute_cost:.2e} XMR")
         else:
             logging.error(f"Minute {i+1}/{total_minutes}: Nedovoljno sredstava za {buyer} (balans: {buyer_balance:.2e} XMR)")
-        time.sleep(60)  # Za testiranje možete smanjiti vrijeme
+        time.sleep(60)
     logging.info(f"Resource usage session za {buyer} završena.")
 
 @app.route("/resource_usage_session", methods=["POST"])
@@ -210,7 +262,7 @@ def resource_usage_session():
     Trošak se raspoređuje jednoliko po minutama (1440 minuta):
       - Svake minute se s kupčevog walleta oduzima minute_cost.
       - 10% ide u MAIN_WALLET.
-      - Preostalih 90% se raspodjeljuje samo među aktivnim rudarima koji su isporučili resurse (prema MINER_SHARES).
+      - Preostalih 90% se raspoređuje samo među aktivnim rudarima koji su isporučili resurse (prema MINER_SHARES).
     """
     data = request.get_json()
     buyer = data.get("buyer")
@@ -222,19 +274,12 @@ def resource_usage_session():
     if not buyer or cpu <= 0 or ram <= 0:
         return jsonify({"error": "Buyer, CPU i RAM moraju biti zadani i veći od 0"}), 400
 
-    # Dodajemo "dummy" zahtjev u RESOURCE_REQUESTS kako bi miner mogao dohvatiti zahtjev (ako je potrebno)
-    RESOURCE_REQUESTS.append({
-        "buyer": buyer,
-        "cpu": cpu,
-        "ram": ram,
-        "timestamp": int(time.time())
-    })
+    # Pokrećemo sesiju u zasebnoj niti
     thread = threading.Thread(target=resource_usage_session_thread, args=(buyer, cpu, ram))
     thread.start()
     return jsonify({"message": "Resource usage session za 24 sata je pokrenuta."}), 200
 
-# Ostali API endpointi
-
+# --- Ostali API endpointi ---
 @app.route('/add_balance', methods=['POST'])
 def api_add_balance():
     data = request.json
@@ -310,7 +355,7 @@ def api_submit_block():
             transactions=block_data.get("transactions", []),
             resource_tasks=block_data.get("resource_tasks", []),
             miner=block_data["miner"],
-            reward=RESOURCE_REWARD,
+            reward=0,  # Reward se ne koristi, pa je postavljen na 0
             nonce=block_data["nonce"]
         )
         calculated_hash = new_block.calculate_hash()
@@ -399,9 +444,9 @@ def resource_usage():
     """
     Endpoint za naplatu korištenja resursa tijekom 1 sata.
     Klijent plaća ukupni trošak, od čega:
-      - 10% ide u glavni wallet (fee)
-      - Preostalih 90% se dijeli među rudarima proporcionalno broju shareova (koji su isporučili resurse)
-    Nakon raspodjele, shareovi se resetiraju.
+      - 10% ide u MAIN_WALLET (fee),
+      - Preostalih 90% se dijeli među rudarima proporcionalno broju shareova (koji su isporučili resurse).
+    Nakon raspodjele, MINER_SHARES se resetiraju.
     """
     data = request.json
     buyer = data.get("buyer")

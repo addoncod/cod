@@ -105,7 +105,8 @@ def api_register_miner():
 
 @app.route("/chain", methods=["GET"])
 def get_chain():
-    return jsonify([block.to_dict() for block in blockchain.chain]), 200
+    """Vraća cijeli blockchain u JSON formatu"""
+    return jsonify([block if isinstance(block, dict) else block.to_dict() for block in blockchain.chain]), 200
 
 @app.route("/resource_request", methods=["GET"])
 def api_get_resource_requests():

@@ -114,7 +114,8 @@ blockchain = Blockchain()
 
 @app.route("/chain", methods=["GET"])
 def get_chain():
-    return jsonify([block.to_dict() for block in blockchain.chain]), 200
+    return jsonify([block.to_dict() if isinstance(block, Block) else block for block in blockchain.chain]), 200
+
 
 @app.route("/transactions", methods=["GET"])
 def get_pending_transactions():
@@ -128,6 +129,17 @@ def api_get_resource_requests():
 def api_assign_resources():
     data = request.json
     return assign_resources_to_user(data.get("buyer"), data.get("cpu"), data.get("ram"))
+@app.route("/resource_usage_session", methods=["POST"])
+def resource_usage_session():
+    data = request.json
+    buyer = data.get("buyer")
+    cpu = data.get("cpu")
+    ram = data.get("ram")
+
+    if not buyer or cpu is None or ram is None:
+        return jsonify({"error": "Neispravni podaci"}), 400
+
+    return jsonify({"message": "Resource usage session pokrenut"}), 200
 
 @app.route("/register_miner", methods=["POST"])
 def api_register_miner():
@@ -147,6 +159,7 @@ def api_buy_resources():
 def api_add_balance():
     data = request.json
     return add_balance(data.get("user"), data.get("amount"))
+
 
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000)

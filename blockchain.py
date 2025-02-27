@@ -4,6 +4,7 @@ import hashlib
 import threading
 import logging
 import requests
+import decimal
 from flask import Flask, request, jsonify
 from flask_socketio import SocketIO, emit
 from functions import (
@@ -38,7 +39,19 @@ FEE_PERCENTAGE = 0.1
 MONERO_PER_CPU_PER_HOUR = 0.0000001       # XMR po CPU jedinici u satu
 MONERO_PER_RAM_PER_HOUR = 0.0000000001058     # XMR po MB RAM-a u satu
 DISCOUNT_FACTOR = 0.6  # Kupac dobiva 60% potencijalnog prinosa
+def calculate_dynamic_reward():
+    """
+    Dinamički izračunava nagradu za rudarenje na osnovu dostupnih CPU i RAM resursa.
+    Formatira vrednost sa 10 decimala radi preciznosti.
+    """
+    reward = (
+        (MINER_CPU_AVAILABLE * MONERO_PER_CPU_PER_HOUR) +
+        (MINER_RAM_AVAILABLE * MONERO_PER_RAM_PER_HOUR)
+    ) / 60  # Delimo na minute jer nagrada dolazi svake minute
 
+    formatted_reward = decimal.Decimal(reward).quantize(decimal.Decimal('0.0000000001'))  # 10 decimala
+    logging.info(f"💰 Dinamički izračunat RESOURCE_REWARD: {formatted_reward}")
+    return float(formatted_reward)  # Vraćamo kao float za kompatibilnost
 # Globalna varijabla za praćenje shareova rudara – tj. rudari koji su isporučili resurse
 MINER_SHARES = {}
 
@@ -368,7 +381,7 @@ def api_submit_block():
         transactions = block_data.get("transactions", [])
         
         # ✅ Preuzimanje nagrade iz POST zahteva
-        reward = block_data.get("reward", 0)  # ✅ Umesto RESOURCE_REWARD
+        reward = decimal.Decimal(block_data.get("reward", 0)).quantize(decimal.Decimal('0.0000000001'))  # 10 decimala  # ✅ Umesto RESOURCE_REWARD
 
         # ✅ Kreiranje novog bloka sa ispravnim podacima
         new_block = Block(

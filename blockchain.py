@@ -118,7 +118,7 @@ class Blockchain:
         return True
 
 def add_block(self, transactions, resource_tasks, miner):
-    """Dodaje novi blok u blockchain."""
+    """Dodaje novi blok u blockchain i briše transakcije koje su dodate."""
     new_block = self.mine_block(self.chain[-1], resource_tasks, miner)
 
     if self.validate_block(new_block, self.chain[-1]):
@@ -126,10 +126,14 @@ def add_block(self, transactions, resource_tasks, miner):
         save_blockchain([block.to_dict() for block in self.chain])
         logging.info(f"✅ Blok {new_block.index} uspješno dodan | Transakcije: {len(new_block.transactions)}")
 
-        # 🛠 **Brisanje transakcija koje su dodate u blok**
+        # 🔥 POPRAVAK: Brišemo transakcije prema njihovim hash vrednostima
         global TRANSACTIONS
-        TRANSACTIONS = [tx for tx in TRANSACTIONS if tx not in new_block.transactions]
-        logging.info(f"🗑️ {len(new_block.transactions)} transakcija uklonjeno iz mempoola.")
+        previous_length = len(TRANSACTIONS)
+        block_transaction_hashes = {hashlib.sha256(json.dumps(tx, sort_keys=True).encode()).hexdigest() for tx in new_block.transactions}
+        TRANSACTIONS = [tx for tx in TRANSACTIONS if hashlib.sha256(json.dumps(tx, sort_keys=True).encode()).hexdigest() not in block_transaction_hashes]
+        new_length = len(TRANSACTIONS)
+        
+        logging.info(f"🗑️ {previous_length - new_length} transakcija uklonjeno iz mempoola. Ostalo: {new_length}")
 
         # 🚀 Ažuriranje balansa korisnika
         wallets = load_wallets()
@@ -147,6 +151,7 @@ def add_block(self, transactions, resource_tasks, miner):
     else:
         logging.error("❌ Neuspješna validacija novog bloka")
         return None
+
 
 
 
@@ -285,20 +290,20 @@ def api_buy_resources():
 def api_get_balance(address):
     return jsonify({"balance": get_balance(address)})
 
-@app.route('/transaction', methods=['POST'])
-def new_transaction():
-    data = request.json
-    sender = data.get("from")
-    recipient = data.get("to")
-    amount = data.get("amount")
+@app.route('/transactions', methods=['GET'])
+def get_pending_transactions():
+    """Vraća samo transakcije koje nisu dodate u blokchain."""
+    chain_transaction_hashes = {
+        hashlib.sha256(json.dumps(tx, sort_keys=True).encode()).hexdigest()
+        for block in blockchain.chain for tx in block.transactions
+    }
 
-    if not sender or not recipient or amount is None:
-        return jsonify({"error": "Neispravni podaci za transakciju"}), 400
+    pending_transactions = [
+        tx for tx in TRANSACTIONS if hashlib.sha256(json.dumps(tx, sort_keys=True).encode()).hexdigest() not in chain_transaction_hashes
+    ]
 
-    TRANSACTIONS.append({"from": sender, "to": recipient, "amount": amount})
-    logging.info(f"✅ Nova transakcija dodata: {sender} -> {recipient} ({amount} coins)")
-
-    return jsonify({"message": "Transakcija zabilježena"}), 200
+    logging.info(f"📜 Vraćam {len(pending_transactions)} transakcija za rudarenje.")
+    return jsonify({"transactions": pending_transactions}), 200
 
 @app.route('/transactions', methods=['GET'])
 def get_pending_transactions():

@@ -356,7 +356,7 @@ def api_assign_resources():
 @app.route('/mine', methods=["POST"])
 def api_submit_block():
     block_data = request.json
-    required_fields = ["index", "previous_hash", "timestamp", "transactions", "resource_tasks", "nonce", "hash", "miner"]
+    required_fields = ["index", "previous_hash", "timestamp", "transactions", "resource_tasks", "nonce", "hash", "miner", "reward"]
 
     # Proveri da li nedostaju neka polja
     missing_fields = [field for field in required_fields if field not in block_data]
@@ -365,18 +365,20 @@ def api_submit_block():
         return jsonify({"error": "Neispravni podaci bloka", "missing_fields": missing_fields}), 400
 
     try:
-        # ✅ Koristi transakcije koje je miner poslao, umesto TRANSACTIONS
         transactions = block_data.get("transactions", [])
+        
+        # ✅ Preuzimanje nagrade iz POST zahteva
+        reward = block_data.get("reward", 0)  # ✅ Umesto RESOURCE_REWARD
 
-        # ✅ Kreiranje novog bloka sa tačnim podacima
+        # ✅ Kreiranje novog bloka sa ispravnim podacima
         new_block = Block(
             index=block_data["index"],
             previous_hash=block_data["previous_hash"],
             timestamp=block_data["timestamp"],
-            transactions=transactions,  # 📌 Koristi transakcije iz bloka
+            transactions=transactions,
             resource_tasks=block_data.get("resource_tasks", []),
             miner=block_data["miner"],
-            reward=RESOURCE_REWARD,
+            reward=reward,  # ✅ Sada koristimo reward iz zahteva
             nonce=block_data["nonce"]
         )
 
@@ -423,6 +425,7 @@ def api_submit_block():
     save_wallets(wallets)  # ✅ Snimamo novi balans
 
     return jsonify({"message": "✅ Blok primljen", "block": new_block.to_dict()}), 200
+
 
 
 

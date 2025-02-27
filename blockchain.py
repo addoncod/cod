@@ -522,6 +522,29 @@ def resource_usage():
 @app.route('/chain', methods=["GET"])
 def get_chain():
     return jsonify([block.to_dict() for block in blockchain.chain]), 200
+@app.route('/transaction', methods=['POST'])
+def new_transaction():
+    """Dodaje novu transakciju u mempool."""
+    data = request.json
+    sender = data.get("from")
+    recipient = data.get("to")
+    amount = data.get("amount")
+
+    if not sender or not recipient or amount is None:
+        return jsonify({"error": "Neispravni podaci za transakciju"}), 400
+
+    # 🔥 Provera da li pošiljalac ima dovoljno balansa
+    wallets = load_wallets()
+    if sender in wallets and wallets[sender] < amount:
+        return jsonify({"error": "Nedovoljno sredstava na računu"}), 400
+
+    # ✅ Kreiraj transakciju i dodaj u mempool
+    transaction = {"from": sender, "to": recipient, "amount": amount}
+    TRANSACTIONS.append(transaction)
+    logging.info(f"✅ Nova transakcija dodata: {sender} -> {recipient} ({amount} coins)")
+
+    return jsonify({"message": "Transakcija zabilježena"}), 200
+
 
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000)

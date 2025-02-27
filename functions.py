@@ -1,6 +1,7 @@
 import time
 import json
 import logging
+import threading
 from flask import Flask, request, jsonify
 
 # Konfiguracija logiranja
@@ -303,6 +304,31 @@ def resource_value():
         "resource_value_rakia": resource_value_rakia,
         "discount_factor": DISCOUNT_FACTOR
     }), 200
+
+
+def distribute_mining_rewards():
+    """Dodeljuje rudarske nagrade svake minute na osnovu CPU i RAM resursa rudara."""
+    while True:
+        wallets = load_wallets()
+        total_rewards = {}
+
+        for miner, resources in REGISTERED_MINERS.items():
+            cpu = resources.get("cpu", 0)
+            ram = resources.get("ram", 0)
+
+            # 🛠 Izračunavanje nagrade na osnovu 24h rudarenja, podeljeno na minute
+            reward_per_minute = ((cpu * MONERO_PER_CPU_PER_HOUR) + (ram * MONERO_PER_RAM_PER_HOUR)) / 60
+
+            wallets[miner] = wallets.get(miner, 0) + reward_per_minute
+            total_rewards[miner] = reward_per_minute
+
+        save_wallets(wallets)
+        logging.info(f"⛏️ Rudarske nagrade distribuirane: {total_rewards}")
+        time.sleep(60)
+
+# Pokreni nit za distribuciju rudarskih nagrada
+reward_thread = threading.Thread(target=distribute_mining_rewards, daemon=True)
+reward_thread.start()
 
 if __name__ == "__main__":
     app.run(port=5000)

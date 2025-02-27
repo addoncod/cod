@@ -305,11 +305,6 @@ def get_pending_transactions():
     logging.info(f"📜 Vraćam {len(pending_transactions)} transakcija za rudarenje.")
     return jsonify({"transactions": pending_transactions}), 200
 
-@app.route('/transactions', methods=['GET'])
-def get_pending_transactions():
-    """Prikazuje transakcije koje čekaju rudarenje"""
-    return jsonify({"transactions": TRANSACTIONS}), 200
-
 @app.route('/register_miner', methods=["POST"])
 def api_register_miner():
     data = request.json

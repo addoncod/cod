@@ -28,7 +28,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 
 # Parametri blockchaina
 DIFFICULTY = 4
-RESOURCE_REWARD = 5
 
 # Parametri za kupnju Rakia Coina (fiksni peg: 1 XMR = 1 Rakia Coin)
 FEE_PERCENTAGE = 0.1
@@ -48,6 +47,30 @@ MAIN_WALLET_ADDRESS = "2Ub5eqoKGRjmEGov9dzqNsX4LA7Erd3joSBB"
 MAIN_MONERO_ADDRESS = "4AF4YJufiiy2CAekHuunVmc12yR2wNQjHdKse7HwqSWGTdZsrDAwGvv55Fmht6VfsEXFw3RxR95yhXV9Rk5mR1JK67FkhVd"
 
 app = Flask(__name__)
+def distribute_mining_rewards():
+    """Dodeljuje rudarske nagrade svake minute na osnovu CPU i RAM resursa rudara."""
+    while True:
+        wallets = load_wallets()
+        total_rewards = {}
+
+        for miner, resources in REGISTERED_MINERS.items():
+            cpu = resources.get("cpu", 0)
+            ram = resources.get("ram", 0)
+
+            # 🛠 Izračunavanje nagrade na osnovu 24h rudarenja, podeljeno na minute
+            reward_per_minute = ((cpu * MONERO_PER_CPU_PER_HOUR) + (ram * MONERO_PER_RAM_PER_HOUR)) / 60
+
+            wallets[miner] = wallets.get(miner, 0) + reward_per_minute
+            total_rewards[miner] = reward_per_minute
+
+        save_wallets(wallets)
+        logging.info(f"⛏️ Rudarske nagrade distribuirane: {total_rewards}")
+        time.sleep(60)
+
+# Pokreni nit za distribuciju rudarskih nagrada
+reward_thread = threading.Thread(target=distribute_mining_rewards, daemon=True)
+reward_thread.start()
+
 socketio = SocketIO(app)
 
 def get_monero_price():

@@ -117,33 +117,37 @@ class Blockchain:
             return False
         return True
 
-    def add_block(self, transactions, resource_tasks, miner):
-        """Dodaje novi blok u blockchain."""
-        new_block = self.mine_block(self.chain[-1], resource_tasks, miner)
-    
-        if self.validate_block(new_block, self.chain[-1]):
-            self.chain.append(new_block)
-            save_blockchain([block.to_dict() for block in self.chain])
-            logging.info(f"✅ Blok {new_block.index} uspješno dodan | Transakcije: {len(new_block.transactions)}")
-    
-            # 🚀 Dodajemo logiku za ažuriranje balansa korisnika
-            wallets = load_wallets()
-            for tx in new_block.transactions:
-                sender, recipient, amount = tx["from"], tx["to"], tx["amount"]
-    
-                if wallets.get(sender, 0) >= amount:  # Provera da li ima dovoljno balansa
-                    wallets[sender] -= amount  # Skidamo sa računa
-                    wallets[recipient] = wallets.get(recipient, 0) + amount  # Dodajemo primatelju
-                    logging.info(f"💰 Transakcija obrađena: {sender} -> {recipient} ({amount} coins)")
-                else:
-                    logging.error(f"🚨 Nedovoljno balansa za transakciju {sender} -> {recipient}")
-    
-            save_wallets(wallets)  # ✅ Snimamo novi balans
-    
-            return new_block
-        else:
-            logging.error("❌ Neuspješna validacija novog bloka")
-            return None
+def add_block(self, transactions, resource_tasks, miner):
+    """Dodaje novi blok u blockchain."""
+    new_block = self.mine_block(self.chain[-1], resource_tasks, miner)
+
+    if self.validate_block(new_block, self.chain[-1]):
+        self.chain.append(new_block)
+        save_blockchain([block.to_dict() for block in self.chain])
+        logging.info(f"✅ Blok {new_block.index} uspješno dodan | Transakcije: {len(new_block.transactions)}")
+
+        # 🛠 **Brisanje transakcija koje su dodate u blok**
+        global TRANSACTIONS
+        TRANSACTIONS = [tx for tx in TRANSACTIONS if tx not in new_block.transactions]
+        logging.info(f"🗑️ {len(new_block.transactions)} transakcija uklonjeno iz mempoola.")
+
+        # 🚀 Ažuriranje balansa korisnika
+        wallets = load_wallets()
+        for tx in new_block.transactions:
+            sender, recipient, amount = tx["from"], tx["to"], tx["amount"]
+            if wallets.get(sender, 0) >= amount:
+                wallets[sender] -= amount
+                wallets[recipient] = wallets.get(recipient, 0) + amount
+                logging.info(f"💰 Transakcija obrađena: {sender} -> {recipient} ({amount} coins)")
+            else:
+                logging.error(f"🚨 Nedovoljno balansa za transakciju {sender} -> {recipient}")
+
+        save_wallets(wallets)
+        return new_block
+    else:
+        logging.error("❌ Neuspješna validacija novog bloka")
+        return None
+
 
 
     def mine_block(self, previous_block, resource_tasks, miner):

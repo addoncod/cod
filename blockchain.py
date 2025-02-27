@@ -118,38 +118,35 @@ class Blockchain:
         return True
 
 def add_block(self, transactions, resource_tasks, miner):
-    """Dodaje novi blok u blockchain i briše transakcije koje su dodate."""
-    new_block = self.mine_block(self.chain[-1], resource_tasks, miner)
+    wallets = load_wallets()
+    valid_transactions = []
+    total_mining_fee = 0  # Ukupni fee za rudara
+
+    for tx in transactions:
+        sender, recipient, amount = tx["from"], tx["to"], tx["amount"]
+        fee = tx.get("fee", amount * 0.03)  # Ako nema fee-a, dodaj 3%
+
+        if wallets.get(sender, 0) >= amount + fee:
+            wallets[sender] -= (amount + fee)
+            wallets[recipient] = wallets.get(recipient, 0) + amount
+            wallets[miner] = wallets.get(miner, 0) + fee  # Rudari dobijaju fee
+            valid_transactions.append(tx)
+            total_mining_fee += fee
+        else:
+            logging.error(f"🚨 Nedovoljno balansa za transakciju {sender} -> {recipient}")
+
+    save_wallets(wallets)
+
+    new_block = self.mine_block(self.chain[-1], valid_transactions, resource_tasks, miner)
 
     if self.validate_block(new_block, self.chain[-1]):
         self.chain.append(new_block)
         save_blockchain([block.to_dict() for block in self.chain])
-        logging.info(f"✅ Blok {new_block.index} uspješno dodan | Transakcije: {len(new_block.transactions)}")
+        logging.info(f"✅ Blok {new_block.index} dodan | Transakcije: {len(new_block.transactions)} | Rudarski fee: {total_mining_fee}")
 
-        # 🔥 POPRAVAK: Brišemo transakcije prema njihovim hash vrednostima
-        global TRANSACTIONS
-        previous_length = len(TRANSACTIONS)
-        block_transaction_hashes = {hashlib.sha256(json.dumps(tx, sort_keys=True).encode()).hexdigest() for tx in new_block.transactions}
-        TRANSACTIONS = [tx for tx in TRANSACTIONS if hashlib.sha256(json.dumps(tx, sort_keys=True).encode()).hexdigest() not in block_transaction_hashes]
-        new_length = len(TRANSACTIONS)
-        
-        logging.info(f"🗑️ {previous_length - new_length} transakcija uklonjeno iz mempoola. Ostalo: {new_length}")
-
-        # 🚀 Ažuriranje balansa korisnika
-        wallets = load_wallets()
-        for tx in new_block.transactions:
-            sender, recipient, amount = tx["from"], tx["to"], tx["amount"]
-            if wallets.get(sender, 0) >= amount:
-                wallets[sender] -= amount
-                wallets[recipient] = wallets.get(recipient, 0) + amount
-                logging.info(f"💰 Transakcija obrađena: {sender} -> {recipient} ({amount} coins)")
-            else:
-                logging.error(f"🚨 Nedovoljno balansa za transakciju {sender} -> {recipient}")
-
-        save_wallets(wallets)
         return new_block
     else:
-        logging.error("❌ Neuspješna validacija novog bloka")
+        logging.error("❌ Neuspješna validacija bloka")
         return None
 
 
@@ -204,15 +201,6 @@ def get_active_miners():
 
 # NOVO: Gradualna 24-satna sesija naplate resursa (1440 minuta)
 def resource_usage_session_thread(buyer, cpu, ram, total_minutes=1440):
-    """
-    Za 2 CPU i 2GB RAM (2048 MB), ukupni trošak u 24 sata je 0.00009 XMR.
-    Trošak se skalira prema unesenim vrijednostima:
-      total_cost = 0.00009 * (cpu/2) * (ram/2048)
-    Svake minute se oduzima minute_cost s kupčevog walleta, a:
-      - 10% ide u MAIN_WALLET,
-      - 90% se raspoređuje među rudarima koji su isporučili resurse (tj. oni u MINER_SHARES)
-         * Međutim, prije raspodjele provjeravamo aktivnost rudara.
-    """
     total_cost = 0.00009 * (cpu / 2) * (ram / 2048.0)
     minute_cost = total_cost / total_minutes
     fee_rate = 0.1
@@ -220,29 +208,34 @@ def resource_usage_session_thread(buyer, cpu, ram, total_minutes=1440):
     miner_reward_per_minute = minute_cost - fee_per_minute
 
     logging.info(f"Resource usage session pokrenut za {buyer}: minute_cost = {minute_cost:.2e} XMR")
+    
     for i in range(total_minutes):
         wallets = load_wallets()
         buyer_balance = wallets.get(buyer, 0)
+
         if buyer_balance >= minute_cost:
-            wallets[buyer] = buyer_balance - minute_cost
-            wallets[MAIN_WALLET] = wallets.get(MAIN_WALLET, 0) + fee_per_minute
-            # Dohvat aktivnih rudara
+            wallets[buyer] -= minute_cost  # Oduzimamo cijenu iz korisnikovog walleta
+            wallets[MAIN_WALLET_ADDRESS] = wallets.get(MAIN_WALLET_ADDRESS, 0) + fee_per_minute
+
             active_miners = get_active_miners()
-            # Presjek rudara koji su isporučili resurse (MINER_SHARES) i aktivnih rudara
             delivering_miners = {m_id: active_miners[m_id] for m_id in MINER_SHARES if m_id in active_miners}
             num_delivering = len(delivering_miners)
+
             if num_delivering > 0:
                 reward_each = miner_reward_per_minute / num_delivering
                 for miner_id in delivering_miners:
                     wallets[miner_id] = wallets.get(miner_id, 0) + reward_each
             else:
                 logging.error("Nema rudara koji su aktivni i isporučili resurse.")
+
             save_wallets(wallets)
             logging.info(f"Minute {i+1}/{total_minutes}: {buyer} - oduzeto {minute_cost:.2e} XMR")
         else:
             logging.error(f"Minute {i+1}/{total_minutes}: Nedovoljno sredstava za {buyer} (balans: {buyer_balance:.2e} XMR)")
-        time.sleep(60)  # Za testiranje možete smanjiti vrijeme
+        time.sleep(60)
+
     logging.info(f"Resource usage session za {buyer} završena.")
+
 
 @app.route("/resource_usage_session", methods=["POST"])
 def resource_usage_session():
@@ -522,9 +515,9 @@ def resource_usage():
 @app.route('/chain', methods=["GET"])
 def get_chain():
     return jsonify([block.to_dict() for block in blockchain.chain]), 200
-@app.route('/transaction', methods=['POST'])
+
+@app.route("/transaction", methods=['POST'])
 def new_transaction():
-    """Dodaje novu transakciju u mempool sa proverenim dostupnim sredstvima."""
     data = request.json
     sender = data.get("from")
     recipient = data.get("to")
@@ -533,30 +526,24 @@ def new_transaction():
     if not sender or not recipient or amount is None:
         return jsonify({"error": "Neispravni podaci za transakciju"}), 400
 
-    # 🔥 Učitavanje wallet-a
-    wallets = load_wallets()
+    fee = amount * 0.03  # 3% naknade za rudarenje
 
-    # 🛠 1. Provera trenutnog salda pošiljaoca
+    wallets = load_wallets()
     sender_balance = wallets.get(sender, 0)
 
-    # 🛠 2. Računamo koliko je pošiljalac već poslao u nepotvrđenim transakcijama
-    pending_outgoing = sum(tx["amount"] for tx in TRANSACTIONS if tx["from"] == sender)
+    if sender_balance < (amount + fee):
+        return jsonify({"error": "Nedovoljno sredstava"}), 400
 
-    # 🛠 3. Provera da li pošiljalac ima dovoljno sredstava uključujući mempool transakcije
-    if sender_balance < (pending_outgoing + amount):
-        return jsonify({
-            "error": "Nedovoljno sredstava na računu",
-            "available_balance": sender_balance,
-            "pending_outgoing": pending_outgoing,
-            "requested_amount": amount
-        }), 400
+    wallets[sender] -= (amount + fee)  # Oduzimamo ukupan iznos (iznos + fee)
+    wallets[recipient] = wallets.get(recipient, 0) + amount
 
-    # ✅ Kreiraj transakciju i dodaj u mempool
-    transaction = {"from": sender, "to": recipient, "amount": amount}
-    TRANSACTIONS.append(transaction)
-    logging.info(f"✅ Nova transakcija dodata: {sender} -> {recipient} ({amount} coins)")
+    TRANSACTIONS.append({"from": sender, "to": recipient, "amount": amount, "fee": fee})
+
+    save_wallets(wallets)
+    logging.info(f"✅ Transakcija dodata: {sender} -> {recipient} ({amount} coins) | Fee: {fee}")
 
     return jsonify({"message": "Transakcija zabilježena"}), 200
+
 
 
 

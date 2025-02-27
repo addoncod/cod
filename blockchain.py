@@ -1,19 +1,25 @@
 import time
 import json
 import hashlib
-import logging
 import threading
+import logging
 import requests
 from flask import Flask, request, jsonify
 from flask_socketio import SocketIO, emit
 from functions import (
-    save_blockchain,
+    add_balance, 
+    buy_resources, 
+    get_balance, 
+    get_user_resources, 
+    get_resource_requests, 
+    save_blockchain, 
     load_blockchain,
     load_wallets,
     save_wallets,
+    assign_resources_to_user,
     register_miner,
-    distribute_mining_rewards,
-    get_resource_requests
+    REGISTERED_MINERS,
+    RESOURCE_REQUESTS
 )
 
 # Konfiguracija logiranja
@@ -21,7 +27,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 
 # Blockchain parametri
 DIFFICULTY = 4
-FEE_PERCENTAGE = 0.03  # 3% naknade za transakcije
+FEE_PERCENTAGE = 0.03
 MAIN_WALLET_ADDRESS = "2Ub5eqoKGRjmEGov9dzqNsX4LA7Erd3joSBB"
 
 app = Flask(__name__)
@@ -48,21 +54,7 @@ class Block:
 
 class Blockchain:
     def __init__(self):
-        self.chain = []
-        chain_data = load_blockchain()
-        for block in chain_data:
-            if isinstance(block, dict):
-                new_block = Block(
-                    index=block["index"],
-                    previous_hash=block["previous_hash"],
-                    timestamp=block["timestamp"],
-                    transactions=block.get("transactions", []),
-                    resource_tasks=block.get("resource_tasks", []),
-                    miner=block["miner"],
-                    reward=block["reward"],
-                    nonce=block["nonce"]
-                )
-                self.chain.append(new_block)
+        self.chain = load_blockchain()
 
     def validate_block(self, new_block, previous_block):
         if previous_block.index + 1 != new_block.index:
@@ -78,7 +70,7 @@ class Blockchain:
     def add_block(self, transactions, resource_tasks, miner):
         wallets = load_wallets()
         valid_transactions = []
-        total_mining_fee = 0  # Ukupni fee za rudara
+        total_mining_fee = 0
 
         for tx in transactions:
             sender, recipient, amount = tx["from"], tx["to"], tx["amount"]
@@ -120,31 +112,41 @@ class Blockchain:
 
 blockchain = Blockchain()
 
-@app.route("/transaction", methods=['POST'])
-def new_transaction():
+@app.route("/chain", methods=["GET"])
+def get_chain():
+    return jsonify([block.to_dict() for block in blockchain.chain]), 200
+
+@app.route("/transactions", methods=["GET"])
+def get_pending_transactions():
+    return jsonify({"transactions": []}), 200
+
+@app.route("/resource_request", methods=["GET"])
+def api_get_resource_requests():
+    return get_resource_requests()
+
+@app.route("/assign_resources", methods=["POST"])
+def api_assign_resources():
     data = request.json
-    sender = data.get("from")
-    recipient = data.get("to")
-    amount = data.get("amount")
-    fee = amount * FEE_PERCENTAGE
+    return assign_resources_to_user(data.get("buyer"), data.get("cpu"), data.get("ram"))
 
-    if not sender or not recipient or amount is None:
-        return jsonify({"error": "Neispravni podaci za transakciju"}), 400
+@app.route("/register_miner", methods=["POST"])
+def api_register_miner():
+    data = request.json
+    return register_miner(data.get("miner_id"), data.get("cpu_available"), data.get("ram_available"))
 
-    wallets = load_wallets()
-    sender_balance = wallets.get(sender, 0)
-    if sender_balance < (amount + fee):
-        return jsonify({"error": "Nedovoljno sredstava"}), 400
+@app.route("/balance/<address>", methods=["GET"])
+def api_get_balance(address):
+    return jsonify({"balance": get_balance(address)})
 
-    wallets[sender] -= (amount + fee)
-    wallets[recipient] = wallets.get(recipient, 0) + amount
-    wallets[MAIN_WALLET_ADDRESS] = wallets.get(MAIN_WALLET_ADDRESS, 0) + fee
-    save_wallets(wallets)
+@app.route("/buy_resources", methods=["POST"])
+def api_buy_resources():
+    data = request.json
+    return buy_resources(data.get("buyer"), data.get("cpu"), data.get("ram"), data.get("seller"))
 
-    transaction = {"from": sender, "to": recipient, "amount": amount}
-    logging.info(f"✅ Transakcija dodana: {sender} -> {recipient} ({amount} coins)")
-
-    return jsonify({"message": "Transakcija zabilježena"}), 200
+@app.route("/add_balance", methods=["POST"])
+def api_add_balance():
+    data = request.json
+    return add_balance(data.get("user"), data.get("amount"))
 
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000)

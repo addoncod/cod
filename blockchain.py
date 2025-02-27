@@ -524,7 +524,7 @@ def get_chain():
     return jsonify([block.to_dict() for block in blockchain.chain]), 200
 @app.route('/transaction', methods=['POST'])
 def new_transaction():
-    """Dodaje novu transakciju u mempool."""
+    """Dodaje novu transakciju u mempool sa proverenim dostupnim sredstvima."""
     data = request.json
     sender = data.get("from")
     recipient = data.get("to")
@@ -533,10 +533,23 @@ def new_transaction():
     if not sender or not recipient or amount is None:
         return jsonify({"error": "Neispravni podaci za transakciju"}), 400
 
-    # 🔥 Provera da li pošiljalac ima dovoljno balansa
+    # 🔥 Učitavanje wallet-a
     wallets = load_wallets()
-    if sender in wallets and wallets[sender] < amount:
-        return jsonify({"error": "Nedovoljno sredstava na računu"}), 400
+
+    # 🛠 1. Provera trenutnog salda pošiljaoca
+    sender_balance = wallets.get(sender, 0)
+
+    # 🛠 2. Računamo koliko je pošiljalac već poslao u nepotvrđenim transakcijama
+    pending_outgoing = sum(tx["amount"] for tx in TRANSACTIONS if tx["from"] == sender)
+
+    # 🛠 3. Provera da li pošiljalac ima dovoljno sredstava uključujući mempool transakcije
+    if sender_balance < (pending_outgoing + amount):
+        return jsonify({
+            "error": "Nedovoljno sredstava na računu",
+            "available_balance": sender_balance,
+            "pending_outgoing": pending_outgoing,
+            "requested_amount": amount
+        }), 400
 
     # ✅ Kreiraj transakciju i dodaj u mempool
     transaction = {"from": sender, "to": recipient, "amount": amount}
@@ -544,6 +557,7 @@ def new_transaction():
     logging.info(f"✅ Nova transakcija dodata: {sender} -> {recipient} ({amount} coins)")
 
     return jsonify({"message": "Transakcija zabilježena"}), 200
+
 
 
 if __name__ == '__main__':

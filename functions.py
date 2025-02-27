@@ -188,13 +188,17 @@ def register_miner(miner_id, cpu_available, ram_available):
     if not miner_id or cpu_available is None or ram_available is None:
         return jsonify({"error": "❌ Neispravni podaci za rudara"}), 400
 
-    REGISTERED_MINERS[miner_id] = {"cpu": cpu_available, "ram": ram_available}
-    wallets = load_wallets()
-    wallets.setdefault(miner_id, 0)
-    save_wallets(wallets)
+    if miner_id not in REGISTERED_MINERS:
+        REGISTERED_MINERS[miner_id] = {"cpu": cpu_available, "ram": ram_available}
+        wallets = load_wallets()
+        wallets.setdefault(miner_id, 0)
+        save_wallets(wallets)
+        logging.info(f"⛏️ Rudar {miner_id} uspešno registrovan sa {cpu_available} CPU i {ram_available} MB RAM-a.")
+    else:
+        logging.info(f"ℹ️ Rudar {miner_id} je već registrovan sa {REGISTERED_MINERS[miner_id]['cpu']} CPU i {REGISTERED_MINERS[miner_id]['ram']} MB RAM-a.")
 
-    logging.info(f"⛏️  Rudar {miner_id} registriran sa {cpu_available} CPU i {ram_available} MB RAM-a.")
-    return jsonify({"message": "✅ Rudar uspješno registriran", "miners": REGISTERED_MINERS}), 200
+    return jsonify({"message": "✅ Rudar uspešno registrovan", "miners": REGISTERED_MINERS}), 200
+
 
 def load_wallets():
     try:
